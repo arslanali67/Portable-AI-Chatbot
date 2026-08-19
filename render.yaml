@@ -1,0 +1,79 @@
+# Render Blueprint — PortableAI
+#
+# Two services + one PostgreSQL database:
+#   1. portableai-api      — FastAPI backend (Python native runtime)
+#   2. portableai-frontend — React admin dashboard (static site)
+#   3. portableai          — managed PostgreSQL (pgvector supported)
+#
+# After provisioning, fill the `sync: false` variables in the Render Dashboard
+# (they prompt for a value on first sync). Never put real secrets in this file.
+# See docs/DEPLOYMENT_RENDER.md for the exact values to use.
+services:
+  - type: web
+    name: portableai-api
+    runtime: python
+    rootDir: apps/api
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    preDeployCommand: alembic upgrade head
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /api/v1/ready
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: LOG_LEVEL
+        value: INFO
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "30"
+      - key: JWT_SECRET
+        generateValue: true
+      # PostgreSQL connection string in asyncpg scheme, e.g.
+      # postgresql+asyncpg://<user>:<password>@<host>:<port>/<database>?ssl=require
+      - key: DATABASE_URL
+        sync: false
+      # JSON array of browser origins allowed to call the API, e.g.
+      # ["https://portableai-frontend.onrender.com"]
+      - key: CORS_ORIGINS
+        sync: false
+      # JSON array of Host headers the API accepts, e.g.
+      # ["portableai-api.onrender.com"]
+      - key: TRUSTED_HOSTS
+        sync: false
+      # Optional OpenAI-compatible provider (leave empty to keep the fake provider)
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_BASE_URL
+        sync: false
+      - key: OPENAI_MODEL
+        sync: false
+      # Optional embeddings: "fake" (default, offline) or "openai"
+      - key: EMBEDDING_PROVIDER_ID
+        sync: false
+      - key: OPENAI_EMBEDDING_MODEL
+        sync: false
+
+  - type: web
+    name: portableai-frontend
+    runtime: static
+    rootDir: apps/frontend
+    plan: free
+    buildCommand: npm ci && npm run build
+    staticPublishPath: apps/frontend/dist
+    # SPA fallback: serve index.html for client-side routes (react-router).
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # Backend Web Service URL baked into the production bundle, e.g.
+      # https://portableai-api.onrender.com
+      - key: VITE_API_BASE_URL
+        sync: false
+
+databases:
+  - name: portableai
+    databaseName: portableai
+    user: portableai
+    plan: free

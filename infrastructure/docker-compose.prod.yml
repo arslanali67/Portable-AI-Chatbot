@@ -1,0 +1,102 @@
+# Production deployment stack: PostgreSQL (pgvector) + API + frontend (nginx).
+#
+#   docker compose -f infrastructure/docker-compose.prod.yml up -d --build
+#
+# Requirements:
+#   - A .env file next to this compose file with the variables from .env.example
+#     (ENVIRONMENT=production, strong JWT_SECRET, TRUSTED_HOSTS, CORS_ORIGINS).
+#   - The API image builds from apps/api, the frontend from apps/frontend.
+#
+# Migrations run once via the alembic one-shot service:
+#   docker compose -f infrastructure/docker-compose.prod.yml run --rm api-migrate
+#
+# Health:
+#   GET /api/v1/health  (liveness, no infra)
+#   GET /api/v1/ready   (readiness, checks DB)
+
+# Shared production environment for the API and the migration one-shot.
+# Alembic's env.py imports app.core.config (which fail-fast validates production
+# settings), so api-migrate must receive the same required variables as the API.
+x-api-env: &api-env
+  ENVIRONMENT: ${ENVIRONMENT:-production}
+  DEBUG: "false"
+  JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+  CORS_ORIGINS: ${CORS_ORIGINS:-[]}
+  TRUSTED_HOSTS: ${TRUSTED_HOSTS:-[]}
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-portableai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-portableai}
+
+# Shared API image build. The public widget script lives outside the API build
+# context (packages/widget), so it is pulled in as an extra build context and
+# bundled by the Dockerfile (see apps/api/Dockerfile).
+x-api-build: &api-build
+  context: ../apps/api
+  additional_contexts:
+    widget: ../packages/widget
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-portableai}
+      POSTGRES_USER: ${POSTGRES_USER:-portableai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-portableai} -d ${POSTGRES_DB:-portableai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - portableai
+
+  api:
+    build: *api-build
+    restart: unless-stopped
+    environment:
+      <<: *api-env
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - portableai
+
+  api-migrate:
+    build: *api-build
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *api-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - portableai
+
+  frontend:
+    build:
+      context: ../apps/frontend
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - portableai
+
+volumes:
+  postgres_data:
+
+networks:
+  portableai:

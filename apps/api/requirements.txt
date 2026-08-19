@@ -1,0 +1,23 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+sqlalchemy
+asyncpg
+alembic
+python-dotenv
+python-multipart
+PyJWT
+bcrypt
+email-validator
+# Redis is a declared future rate-limiter backend seam (app/core/rate_limit.py
+# defines a Redis-backed implementation contract; the MVP ships the in-memory
+# limiter). No Redis infrastructure is deployed or required at runtime.
+redis
+httpx
+pgvector
+pypdf
+python-docx
+beautifulsoup4
+pytest
+pytest-asyncio

@@ -1,0 +1,11 @@
+# Taste — Workflow & Communication
+- Defines features in "source of truth" architecture docs (under `src/`) BEFORE implementing code; every milestone starts by updating the architecture docs and scope rules. Confidence: 0.9
+- Verifies every milestone end-to-end: full pytest suite, alembic upgrade → downgrade → upgrade, then boots the server and hits endpoints live (/, /docs, health, plus the new endpoints) before declaring done. Confidence: 0.9
+- All schema changes go through Alembic migrations only (never hand-edit tables); migrations are reversible and their up/down/up cycle is verified. Confidence: 0.9
+- Secrets and credentials come only from environment / .env — never hardcoded in code, alembic.ini, migrations, metadata, or logs. Confidence: 0.9
+- Reuses the existing project virtual environment instead of creating a new one. Confidence: 0.7
+- Keeps work tidy: removes scratch/probe files, temp files, and dead code at the end of each task. Confidence: 0.6
+- Keeps docs in sync with code: README.md and the `src/` architecture docs are updated in the same milestone as the implementation, never deferred to a later task. Confidence: 0.7
+- Communicates milestone completion with structured summaries covering what changed, files created/modified, test counts, migration status, verification results, limitations, and run commands. Confidence: 0.6
+- Plans each feature as a concrete step sequence before coding (docs → config → contracts → service → router → tests → verify → README), tracks it with a todo list, and updates each step's status as it completes. Confidence: 0.7
+- Diagnoses failures by isolating root cause with targeted probes (direct service calls, temporary debug output that is removed afterwards, checking migration state, verifying live upstream behavior) rather than guessing; incorrect test expectations are corrected to match correct implementation behavior. Confidence: 0.7

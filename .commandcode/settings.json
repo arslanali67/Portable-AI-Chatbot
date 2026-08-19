@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(C:\\Users\\ok\\Desktop\\Portable AI Chatbot\\AI chatbot\\Scripts\\python.exe:*)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}
