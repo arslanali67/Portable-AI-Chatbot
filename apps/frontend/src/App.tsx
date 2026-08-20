@@ -10,6 +10,7 @@ import LoginPage from "./pages/LoginPage";
 import OrganizationsPage from "./pages/OrganizationsPage";
 import ProvidersPage from "./pages/ProvidersPage";
 import RegisterPage from "./pages/RegisterPage";
+import WidgetPreviewPage from "./pages/WidgetPreviewPage";
 
 export default function App() {
   return (
@@ -18,6 +19,14 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route
+            path="/organizations/:organizationId/chatbots/:chatbotId/widget-preview"
+            element={
+              <RequireAuth>
+                <WidgetPreviewPage />
+              </RequireAuth>
+            }
+          />
           <Route
             element={
               <RequireAuth>
@@ -28,7 +37,7 @@ export default function App() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/organizations" element={<OrganizationsPage />} />
             <Route path="/organizations/:organizationId" element={<ChatbotsPage />} />
-            <Route path="/organizations/:organizationId/chatbots/:chatbotId" element={<ChatbotDetailPage />} />
+            <Route path="/organizations/:organizationId/chatbots/:chatbotId/*" element={<ChatbotDetailPage />} />
             <Route path="/providers" element={<ProvidersPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

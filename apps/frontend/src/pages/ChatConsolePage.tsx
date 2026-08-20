@@ -25,6 +25,16 @@ export default function ChatConsolePage() {
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
+// Monotonic, session-unique negative ids for optimistic/temporary messages.
+// Persisted messages use positive DB ids; the negatives can never collide
+// with them, and each send gets a distinct value (no Date.now() races).
+let clientMessageSeq = 0;
+
+function nextClientMessageId(): number {
+  clientMessageSeq -= 1;
+  return clientMessageSeq;
+}
+
   const loadConversations = useCallback(() => {
     api
       .listConversations(orgId, botId)
@@ -79,9 +89,13 @@ export default function ChatConsolePage() {
     setError(null);
     setStreaming(true);
 
-    // Optimistically append the user message (mimic the backend sequence).
+    // Optimistically append the user + assistant placeholders. Both use unique
+    // client-side (negative) ids that are stable for the whole session and can
+    // never collide with persisted positive DB ids or with each other.
+    const userTempId = nextClientMessageId();
+    const assistantTempId = nextClientMessageId();
     const userMsg: Message = {
-      id: -Date.now(),
+      id: userTempId,
       conversation_id: selected,
       role: "user",
       content,
@@ -89,12 +103,8 @@ export default function ChatConsolePage() {
       metadata: null,
       created_at: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, userMsg]);
-
-    // Assistant placeholder
-    const assistantId = -Date.now() + 1;
     const assistantMsg: Message = {
-      id: assistantId,
+      id: assistantTempId,
       conversation_id: selected,
       role: "assistant",
       content: "",
@@ -102,23 +112,74 @@ export default function ChatConsolePage() {
       metadata: null,
       created_at: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, assistantMsg]);
+    setMessages((prev) => [...prev, userMsg, assistantMsg]);
 
     try {
       await streamChat(orgId, selected, content, (event) => {
-        if (event.type === "token") {
-          const { token } = event.data as { token?: string };
-          setMessages((prev) => {
-            const next = [...prev];
-            const last = next[next.length - 1];
-            if (last && last.role === "assistant" && last.id === assistantId) {
-              next[next.length - 1] = { ...last, content: last.content + (token ?? "") };
-            }
-            return next;
-          });
+        if (event.type === "user") {
+          // Reconcile the optimistic user message with its persisted record so
+          // the real DB id becomes its React key (never duplicated).
+          const data = event.data as Partial<Message>;
+          if (typeof data.id === "number" && data.id > 0) {
+            const persistedId = data.id;
+            const persistedSequence = data.sequence_number;
+            const persistedContent = data.content;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === userTempId
+                  ? {
+                      id: persistedId,
+                      conversation_id: m.conversation_id,
+                      role: "user",
+                      content: typeof persistedContent === "string" ? persistedContent : m.content,
+                      sequence_number:
+                        typeof persistedSequence === "number"
+                          ? persistedSequence
+                          : m.sequence_number,
+                      metadata: m.metadata,
+                      created_at: m.created_at,
+                    }
+                  : m,
+              ),
+            );
+          }
+        } else if (event.type === "token") {
+          const { delta } = event.data as { delta?: string };
+          if (delta) {
+            // Append to the single temporary assistant message by its unique id.
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantTempId ? { ...m, content: m.content + delta } : m,
+              ),
+            );
+          }
+        } else if (event.type === "end") {
+          // Stream succeeded: replace the temporary assistant with its persisted
+          // record — same bubble, accumulated content, real DB id as the key.
+          const data = event.data as { message_id?: number; sequence_number?: number };
+          if (typeof data.message_id === "number" && data.message_id > 0) {
+            const persistedId = data.message_id;
+            const persistedSequence = data.sequence_number;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantTempId
+                  ? {
+                      ...m,
+                      id: persistedId,
+                      sequence_number:
+                        typeof persistedSequence === "number"
+                          ? persistedSequence
+                          : m.sequence_number,
+                    }
+                  : m,
+              ),
+            );
+          }
         } else if (event.type === "error") {
           const { detail } = event.data as { detail?: string };
           setError(detail ?? "Streaming error");
+          // Backend persists no assistant message on failure — drop the temp one.
+          setMessages((prev) => prev.filter((m) => m.id !== assistantTempId));
         }
       });
     } catch (err) {

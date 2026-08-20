@@ -30,7 +30,10 @@ class WidgetConfigRepository:
 
     async def get_by_public_key_session(self, chatbot_id: int) -> WidgetConfig | None:
         result = await self.db.execute(
-            select(WidgetConfig).where(WidgetConfig.chatbot_id == chatbot_id)
+            select(WidgetConfig)
+            .where(WidgetConfig.chatbot_id == chatbot_id)
+            .order_by(WidgetConfig.id.desc())
+            .limit(1)
         )
         return result.scalar_one_or_none()
 

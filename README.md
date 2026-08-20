@@ -318,25 +318,25 @@ Future seams (not implemented): tools/agents, usage tracking, retries/fallback, 
 
 ## Real Provider (OpenAI-compatible)
 
-First real provider integrated as an extension of the existing AI gateway — no gateway branching, no runtime changes.
+The real provider is **Google Gemini**, integrated through the existing AI gateway via Google's OpenAI-compatible API — no gateway branching, no runtime changes.
 
 ```text
-Application → AI Gateway → Provider Adapter → HTTP API
+Application → AI Gateway → Provider Adapter → Gemini OpenAI-compatible API
 ```
 
-- **Adapter**: `app/ai/providers/openai_compatible.py` (`OpenAICompatibleHTTPProvider`) converts `AIRequest` to the OpenAI-style payload, calls `httpx.AsyncClient` with an explicit timeout, normalizes the response, and maps HTTP errors to the provider-neutral exception hierarchy.
+- **Adapter**: `app/ai/providers/openai_compatible.py` (`OpenAICompatibleHTTPProvider`) converts `AIRequest` to the OpenAI-style payload, calls `httpx.AsyncClient` with an explicit timeout, normalizes the response, and maps HTTP errors to the provider-neutral exception hierarchy. The adapter appends `/chat/completions` to the configured base URL.
+- **Provider ID / Model ID**: `gemini` / `gemini-3.6-flash` (model from `OPENAI_MODEL`).
 - **Credentials**: env-only via settings (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_TIMEOUT`, `OPENAI_MODEL`). Keys are never stored in DB, chatbot, organization, metadata, JWT, logs, source, or responses.
-- **Enablement**: provider/model registered as `openai` but **disabled** unless a key is configured — no silent unauthenticated calls; clear runtime failure otherwise. Fake providers stay enabled for offline tests.
-- **Model**: registered through `ModelRegistry` (default `gpt-4o-mini`, configurable) — extensible string, no enum, no migration.
+- **Enablement**: provider/model registered as `gemini` but **disabled** unless a key is configured — no silent unauthenticated calls; clear runtime failure otherwise. Fake providers stay enabled for offline tests.
 - **No retries**: one request = one provider call. Retry/backoff/fallback/circuit breaker are future seams.
 - **Tests**: all real-provider tests use mocked HTTP — no network, no key required. Normal `pytest` stays offline/deterministic.
 
 ```bash
 # .env (never commit a real key)
-OPENAI_API_KEY=
-OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_KEY=<GEMINI_API_KEY>
+OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
 OPENAI_TIMEOUT=60.0
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gemini-3.6-flash
 ```
 
 ## Provider & Model Discovery
@@ -355,7 +355,7 @@ Client → AI Management API → AIManagementService → ProviderRegistry / Mode
 ```
 
 - **Credentials are never returned** — no API keys, auth headers, base URLs, or registry internals in any response.
-- `enabled` reflects real state (e.g. `openai` shows `false` without a configured key).
+- `enabled` reflects real state (e.g. `gemini` shows `false` without a configured key).
 - Chatbot create/update validates `provider_id`/`model_id` against the registries: unknown provider/model, model from another provider, or disabled provider/model → 422.
 - Read-only scope: enable/disable mutation is a future platform-admin milestone (no `platform_admin` role yet, no DB tables for providers/models).
 

@@ -1,7 +1,10 @@
 """Default provider/model registries and gateway singleton.
 
-Built-in fake providers for development and tests. Real providers (Kimi,
-DeepSeek, etc.) are registered here later — only adapter + metadata + models.
+Built-in fake providers for development and tests.
+
+Real providers are registered through provider-neutral adapters.
+Gemini currently uses Google's OpenAI-compatible API through
+OpenAICompatibleHTTPProvider.
 """
 
 from app.ai.capabilities import AICapability
@@ -13,12 +16,17 @@ from app.ai.providers.fake import FakeAIProvider
 from app.ai.providers.openai_compatible import OpenAICompatibleHTTPProvider
 from app.core.config import settings
 
+
 TEXT = {AICapability.TEXT_GENERATION}
 TEXT_STREAM = {AICapability.TEXT_GENERATION, AICapability.STREAMING}
 
 
 def build_provider_registry() -> ProviderRegistry:
     registry = ProviderRegistry()
+
+    # ============================================================
+    # Fake providers
+    # ============================================================
 
     registry.register(
         FakeAIProvider(
@@ -35,6 +43,7 @@ def build_provider_registry() -> ProviderRegistry:
             label="provider-a",
         )
     )
+
     registry.register(
         FakeAIProvider(
             ProviderMetadata(
@@ -51,49 +60,43 @@ def build_provider_registry() -> ProviderRegistry:
         )
     )
 
-    # Real OpenAI-compatible provider — registered but disabled unless a key
-    # is configured. Missing key fails clearly at runtime; never unauthenticated.
-    if settings.openai_api_key:
-        registry.register(
-            OpenAICompatibleHTTPProvider(
-                ProviderMetadata(
-                    provider_id="openai",
-                    display_name="OpenAI",
-                    description="OpenAI-compatible chat completions",
-                    enabled=True,
-                    base_url=settings.openai_base_url,
-                    authentication_type="api_key",
-                    compatibility_type="openai_compatible",
-                    capabilities=TEXT,
-                ),
-                api_key=settings.openai_api_key,
+    # ============================================================
+    # Google Gemini
+    #
+    # Uses Google's OpenAI-compatible API.
+    # The adapter remains OpenAICompatibleHTTPProvider because
+    # Gemini exposes the OpenAI-compatible /chat/completions API.
+    # ============================================================
+
+    gemini_enabled = bool(settings.openai_api_key)
+
+    registry.register(
+        OpenAICompatibleHTTPProvider(
+            ProviderMetadata(
+                provider_id="gemini",
+                display_name="Google Gemini",
+                description="Google Gemini via OpenAI-compatible API",
+                enabled=gemini_enabled,
                 base_url=settings.openai_base_url,
-                timeout=settings.openai_timeout,
-            )
+                authentication_type="api_key",
+                compatibility_type="openai_compatible",
+                capabilities=TEXT_STREAM,
+            ),
+            api_key=settings.openai_api_key or "",
+            base_url=settings.openai_base_url,
+            timeout=settings.openai_timeout,
         )
-    else:
-        registry.register(
-            OpenAICompatibleHTTPProvider(
-                ProviderMetadata(
-                    provider_id="openai",
-                    display_name="OpenAI",
-                    description="OpenAI-compatible chat completions (disabled: no key)",
-                    enabled=False,
-                    base_url=settings.openai_base_url,
-                    authentication_type="api_key",
-                    compatibility_type="openai_compatible",
-                    capabilities=TEXT,
-                ),
-                api_key="",
-                base_url=settings.openai_base_url,
-                timeout=settings.openai_timeout,
-            )
-        )
+    )
+
     return registry
 
 
 def build_model_registry() -> ModelRegistry:
     registry = ModelRegistry()
+
+    # ============================================================
+    # Fake models
+    # ============================================================
 
     registry.register(
         ModelMetadata(
@@ -106,6 +109,7 @@ def build_model_registry() -> ModelRegistry:
             capabilities=TEXT_STREAM,
         )
     )
+
     registry.register(
         ModelMetadata(
             provider_id="fake-a",
@@ -117,6 +121,7 @@ def build_model_registry() -> ModelRegistry:
             capabilities=TEXT_STREAM,
         )
     )
+
     registry.register(
         ModelMetadata(
             provider_id="fake-b",
@@ -128,29 +133,38 @@ def build_model_registry() -> ModelRegistry:
             capabilities=TEXT_STREAM,
         )
     )
-    # Real model — enabled only when provider has a configured key.
+
+    # ============================================================
+    # Google Gemini model
+    # ============================================================
+
     registry.register(
         ModelMetadata(
-            provider_id="openai",
+            provider_id="gemini",
             model_id=settings.openai_model,
             display_name=settings.openai_model,
             context_window=128000,
             max_output_tokens=4096,
             enabled=bool(settings.openai_api_key),
-            capabilities=TEXT,
+            capabilities=TEXT_STREAM,
         )
     )
+
     return registry
 
 
 def build_gateway() -> AIGateway:
-    return AIGateway(providers=build_provider_registry(), models=build_model_registry())
+    return AIGateway(
+        providers=build_provider_registry(),
+        models=build_model_registry(),
+    )
 
 
 provider_registry = build_provider_registry()
 model_registry = build_model_registry()
 gateway = build_gateway()
 
-# Chatbot defaults — defined here, never hardcoded in services/routes/gateway.
+
+# Chatbot defaults
 DEFAULT_PROVIDER_ID = "fake-a"
 DEFAULT_MODEL_ID = "fake-model-small"

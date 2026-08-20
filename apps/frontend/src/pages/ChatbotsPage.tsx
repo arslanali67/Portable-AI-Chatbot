@@ -37,7 +37,7 @@ export default function ChatbotsPage() {
     Promise.all([api.listChatbots(orgId), api.listProviders()])
       .then(([bots, provs]) => {
         setChatbots(bots);
-        setProviders(provs.filter((p) => p.enabled && p.capabilities.includes("chat")));
+        setProviders(provs.filter((p) => p.enabled && p.capabilities.includes("text_generation")));
       })
       .catch((err) => setError(errorMessage(err)))
       .finally(() => setLoading(false));
@@ -79,6 +79,10 @@ export default function ChatbotsPage() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    if (!providerId || !modelId) {
+      setError("Select a provider and a model.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -220,7 +224,13 @@ export default function ChatbotsPage() {
             </label>
             <label>
               Provider
-              <select value={providerId} onChange={(e) => setProviderId(e.target.value)}>
+              <select
+                value={providerId}
+                onChange={(e) => {
+                  setProviderId(e.target.value);
+                  setModelId("");
+                }}
+              >
                 {providers.map((p) => (
                   <option key={p.provider_id} value={p.provider_id}>
                     {p.display_name}
@@ -233,10 +243,14 @@ export default function ChatbotsPage() {
               <select
                 value={modelId}
                 onChange={(e) => setModelId(e.target.value)}
-                disabled={models.length === 0}
+                disabled={!providerId || models.length === 0}
                 required
               >
-                {models.length === 0 && <option value="">No models available</option>}
+                {models.length === 0 ? (
+                  <option value="">No models available</option>
+                ) : (
+                  <option value="">Select model</option>
+                )}
                 {models.map((m) => (
                   <option key={m.model_id} value={m.model_id}>
                     {m.display_name}

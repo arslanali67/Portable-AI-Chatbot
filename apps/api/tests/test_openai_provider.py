@@ -269,6 +269,87 @@ async def test_raw_provider_response_does_not_escape() -> None:
     }
 
 
+# --- Gemini via OpenAI-compatible adapter ---
+
+
+def _gemini_provider(client) -> OpenAICompatibleHTTPProvider:
+    """Google Gemini configured through the shared OpenAI-compatible adapter."""
+    return OpenAICompatibleHTTPProvider(
+        ProviderMetadata(
+            provider_id="gemini",
+            display_name="Google Gemini",
+            description="Gemini via OpenAI-compatible API",
+            enabled=True,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+            authentication_type="api_key",
+            compatibility_type="openai_compatible",
+            capabilities={AICapability.TEXT_GENERATION, AICapability.STREAMING},
+        ),
+        api_key="test-gemini-key",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+        timeout=30.0,
+        client=client,
+    )
+
+
+@pytest.mark.asyncio
+async def test_gemini_openai_compatible_endpoint_and_payload() -> None:
+    t = _transport()
+    provider = _gemini_provider(AsyncClient(transport=t))
+    await provider.generate(_request(provider_id="gemini", model_id="gemini-3.6-flash"))
+    req = t.requests[0]
+    # Adapter appends /chat/completions to the Gemini OpenAI-compatible base.
+    assert (
+        str(req.url)
+        == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    )
+    assert req.headers["Authorization"] == "Bearer test-gemini-key"
+    import json
+
+    payload = json.loads(req.content)
+    assert payload["model"] == "gemini-3.6-flash"
+    assert payload["messages"][0] == {"role": "system", "content": "You are helpful."}
+    assert payload["messages"][1] == {"role": "user", "content": "Hello"}
+    assert payload["temperature"] == 0.5
+    assert payload["max_tokens"] == 100
+    assert "metadata" not in payload
+
+
+@pytest.mark.asyncio
+async def test_gemini_openai_compatible_response_parsing() -> None:
+    provider = _gemini_provider(AsyncClient(transport=_transport()))
+    response = await provider.generate(
+        _request(provider_id="gemini", model_id="gemini-3.6-flash")
+    )
+    assert response.content == "Mock reply"
+    assert response.provider_id == "gemini"
+    assert response.model_id == "gemini-3.6-flash"
+    assert response.usage.total_tokens == 20
+    assert "test-gemini-key" not in str(response.__dict__)
+
+
+@pytest.mark.asyncio
+async def test_gemini_openai_compatible_streaming_parsing() -> None:
+    body = "\n\n".join(
+        [
+            'data: {"choices":[{"delta":{"content":"Hel"},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"content":"lo"},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}',
+            "data: [DONE]",
+        ]
+    )
+    t = MockTransport(Response(200, content=body))
+    provider = _gemini_provider(AsyncClient(transport=t))
+    request = _request(provider_id="gemini", model_id="gemini-3.6-flash")
+    events = [event async for event in provider.stream(request)]
+    assert [e.type.value for e in events] == ["start", "token", "token", "end"]
+    tokens = [e.data["delta"] for e in events if e.type.value == "token"]
+    assert tokens == ["Hel", "lo"]
+    end = events[-1]
+    assert end.data["finish_reason"] == "stop"
+    assert end.data["usage"] == {"input_tokens": 3, "output_tokens": 2}
+
+
 # --- Gateway integration ---
 
 

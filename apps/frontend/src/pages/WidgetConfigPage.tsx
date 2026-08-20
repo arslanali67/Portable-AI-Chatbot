@@ -140,28 +140,17 @@ export default function WidgetConfigPage() {
         <iframe
           title="Widget preview"
           className="widget-preview"
-          srcDoc={previewHtml(config.public_key)}
+          src={`/organizations/${orgId}/chatbots/${botId}/widget-preview?key=${encodeURIComponent(config.public_key)}`}
         />
       </div>
     </div>
   );
 }
 
-function previewHtml(publicKey: string): string {
-  return `<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8" /><title>Widget preview</title></head>
-<body>
-  <p style="font-family:system-ui;color:#666;padding:16px">Preview pane — the launcher appears bottom-right.</p>
-  <script src="${widgetScriptSrc()}" data-chatbot="${publicKey}" data-api="${widgetApiBase()}" async></script>
-</body>
-</html>`;
-}
-
-function widgetScriptSrc(): string {
+export function widgetScriptSrc(): string {
   return API_BASE_URL ? `${API_BASE_URL}/widget.js` : "/widget.js";
 }
 
-function widgetApiBase(): string {
+export function widgetApiBase(): string {
   return API_BASE_URL ? API_BASE_URL : window.location.origin;
 }

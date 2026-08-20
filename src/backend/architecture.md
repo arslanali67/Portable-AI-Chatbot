@@ -550,7 +550,7 @@ Application → AI Gateway → Provider Adapter → HTTP API
 
 ### Model & Provider Registration
 
-- `provider_id = "openai"`, model id from config/env (default `gpt-4o-mini`) registered through existing registries — extensible strings, no enums.
+- `provider_id = "gemini"` (display name "Google Gemini" — Google's OpenAI-compatible API), model id from config/env (`OPENAI_MODEL`, default `gemini-3.6-flash`) registered through existing registries — extensible strings, no enums.
 - Enablement reuses `ProviderMetadata.enabled` / `ModelMetadata.enabled`; fake providers stay enabled for offline tests.
 
 ### Error Mapping
@@ -593,7 +593,7 @@ Client → AI Management API → AIManagementService → ProviderRegistry / Mode
 
 - Responses contain only safe metadata: provider_id, display_name, description, enabled, authentication_type, compatibility_type, capabilities (providers); provider_id, model_id, display_name, context_window, max_output_tokens, enabled, capabilities (models).
 - `base_url` and any credential-bearing fields are excluded from DTOs.
-- `enabled: false` for OpenAI without a key — no sensitive explanation of missing credentials.
+- `enabled: false` for the real provider (Gemini) without a key — no sensitive explanation of missing credentials.
 
 ### Platform vs Tenant Config
 

@@ -71,11 +71,17 @@ export interface ChatbotUpdate {
 }
 
 export type AICapability =
-  | "chat"
-  | "embeddings"
+  | "text_generation"
+  | "streaming"
+  | "tool_calling"
+  | "structured_output"
   | "vision"
-  | "tools"
-  | "json_mode";
+  | "audio_input"
+  | "audio_output"
+  | "embeddings"
+  | "image_generation"
+  | "json_mode"
+  | "reasoning";
 
 export interface Provider {
   provider_id: string;

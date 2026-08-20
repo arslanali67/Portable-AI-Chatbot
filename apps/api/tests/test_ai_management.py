@@ -80,15 +80,16 @@ def test_provider_list_200() -> None:
     r = client.get("/api/v1/ai/providers", headers=_auth(token))
     assert r.status_code == 200
     ids = {p["provider_id"] for p in r.json()}
-    assert {"fake-a", "fake-b", "openai"} <= ids
+    assert {"fake-a", "fake-b", "gemini"} <= ids
 
 
 def test_single_provider_200() -> None:
     token = _setup_token()
-    r = client.get("/api/v1/ai/providers/openai", headers=_auth(token))
+    r = client.get("/api/v1/ai/providers/gemini", headers=_auth(token))
     assert r.status_code == 200
     body = r.json()
-    assert body["provider_id"] == "openai"
+    assert body["provider_id"] == "gemini"
+    assert body["display_name"] == "Google Gemini"
     assert body["compatibility_type"] == "openai_compatible"
     assert body["authentication_type"] == "api_key"
     # Enabled reflects actual config state (no key in CI → disabled).
@@ -156,7 +157,7 @@ def test_no_secrets_in_provider_response() -> None:
 
 def test_no_secrets_in_model_response() -> None:
     token = _setup_token()
-    for provider in ("fake-a", "openai"):
+    for provider in ("fake-a", "gemini"):
         for m in client.get(
             f"/api/v1/ai/providers/{provider}/models", headers=_auth(token)
         ).json():
@@ -214,13 +215,48 @@ def test_chatbot_model_from_other_provider_422() -> None:
 def test_chatbot_disabled_provider_422() -> None:
     token = _setup_token()
     org_id = _create_org(token)
-    # openai is disabled without a key in CI → must be rejected.
-    r = _create_bot(token, org_id, provider_id="openai", model_id="gpt-4o-mini")
+    # gemini is disabled without a key in CI → must be rejected.
+    r = _create_bot(token, org_id, provider_id="gemini", model_id="gemini-3.6-flash")
     if r.status_code == 422:
         assert "disabled" in r.json()["detail"]
     else:
-        # If a key IS configured, creating an openai chatbot is valid.
+        # If a key IS configured, creating a gemini chatbot is valid.
         assert r.status_code == 201
+
+
+def test_gemini_model_in_discovery() -> None:
+    token = _setup_token()
+    r = client.get("/api/v1/ai/providers/gemini/models", headers=_auth(token))
+    assert r.status_code == 200
+    models = r.json()
+    assert models, "gemini provider must expose at least one model"
+    # Every model belongs to the gemini provider.
+    assert all(m["provider_id"] == "gemini" for m in models)
+    # The required model is present and enabled when a key is configured.
+    gemini_flash = next((m for m in models if m["model_id"] == "gemini-3.6-flash"), None)
+    assert gemini_flash is not None
+    assert gemini_flash["display_name"] == "gemini-3.6-flash"
+    assert gemini_flash["enabled"] in (True, False)
+
+
+def test_chatbot_create_with_gemini() -> None:
+    token = _setup_token()
+    org_id = _create_org(token)
+    r = _create_bot(token, org_id, provider_id="gemini", model_id="gemini-3.6-flash")
+    if r.status_code == 201:
+        body = r.json()
+        assert body["provider_id"] == "gemini"
+        assert body["model_id"] == "gemini-3.6-flash"
+    else:
+        # No API key configured in CI → gemini is disabled.
+        assert r.status_code == 422
+
+
+def test_chatbot_gemini_model_must_belong_to_gemini() -> None:
+    token = _setup_token()
+    org_id = _create_org(token)
+    r = _create_bot(token, org_id, provider_id="gemini", model_id="fake-model-small")
+    assert r.status_code == 422
 
 
 def test_chatbot_update_validation() -> None:

@@ -289,6 +289,26 @@ def test_public_cannot_inject_provider_model() -> None:
     assert r.status_code == 422
 
 
+def test_public_stream_with_multiple_widget_configs() -> None:
+    """Regression: multiple credentials for one chatbot must not break session
+    resolution (get_by_public_key_session used to raise MultipleResultsFound)."""
+    token, org_id, bot_id, key = _setup_public_bot()
+    # Create a second credential for the same chatbot (old one stays active).
+    r = client.post(
+        f"/api/v1/organizations/{org_id}/chatbots/{bot_id}/widget-config",
+        headers=_auth(token),
+    )
+    assert r.status_code == 201
+    # Session created with the first key must still resolve and stream.
+    sess = _session(key).json()["session_token"]
+    r = _stream(sess, "hello multiple")
+    assert r.status_code == 200
+    events = _parse_sse(r.text)
+    types = [t for t, _ in events]
+    assert "start" in types
+    assert types[-1] == "end"
+
+
 # --- Cross-tenant / cross-chatbot ---
 
 
