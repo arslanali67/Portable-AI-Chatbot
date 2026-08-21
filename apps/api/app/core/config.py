@@ -38,7 +38,10 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # CORS + trusted hosts
-    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origins: list[str] = [
+    "http://localhost:3000",
+    "http://localhost:5500",
+    ]
     trusted_hosts: list[str] = []
 
     # Logging

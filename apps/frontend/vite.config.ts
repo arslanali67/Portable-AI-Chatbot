@@ -3,19 +3,25 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react()],
+
   server: {
     port: 3000,
+
     proxy: {
       "/api": {
-        target: process.env.VITE_API_PROXY_TARGET || "http://localhost:8000",
+        target: "https://portable-ai-chatbot-production.up.railway.app",
         changeOrigin: true,
+        secure: true,
       },
+
       "/widget.js": {
-        target: process.env.VITE_API_PROXY_TARGET || "http://localhost:8000",
+        target: "https://portable-ai-chatbot-production.up.railway.app",
         changeOrigin: true,
+        secure: true,
       },
     },
   },
+
   build: {
     outDir: "dist",
     sourcemap: false,
