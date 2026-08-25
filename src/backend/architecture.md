@@ -1080,26 +1080,42 @@ No rewrites: auth, JWT, orgs, memberships, chatbot CRUD, AI gateway, registries,
 
 - `apps/frontend/` — React + TypeScript + Vite.
 - Minimal dependencies: `react`, `react-dom`, `react-router-dom`, `vite`, `@vitejs/plugin-react`, TypeScript. No state library (React context), no UI framework — small hand-rolled CSS. No duplicate backend logic — the frontend is a thin API consumer.
+- Dev-only test tooling: Vitest + React Testing Library + `@testing-library/jest-dom` + `@testing-library/user-event` + jsdom. Tests run via `npm run test` (`vitest run`) and are excluded from the production build.
 
 ### Architecture
 
+The frontend currently uses a **flat `pages/` layout**. Feature-folder
+decomposition is NOT implemented and remains only a future refactor seam.
+
 ```text
 apps/frontend/src/
-├── app/            # App shell, router, providers
-├── api/            # typed API client + DTO types + error handling
-├── auth/           # auth context, login/register/logout, token storage
-├── components/     # shared UI (layout, buttons, forms, badges)
-├── features/
-│   ├── organizations/  # org selector, list, create
-│   ├── chatbots/       # chatbot CRUD + lifecycle
-│   ├── knowledge/      # knowledge docs + ingestion + search
-│   ├── conversations/  # chat test console (SSE streaming)
-│   ├── widget/         # widget config + embed snippet + preview
-│   └── ai/             # provider/model read-only view
-├── hooks/           # shared React hooks
-├── routes/          # route definitions (protected/guest)
-└── styles/          # global CSS
+├── api/            # client.ts + types.ts: the frontend/backend contract mirror
+│                   #   (typed fetch wrapper, Bearer injection, ApiError, SSE streamChat)
+├── auth/           # AuthContext: login/register/logout, token hydration via /auth/me
+├── components/     # shared UI (RequireAuth)
+├── layout/         # AppLayout (sidebar shell + Outlet)
+├── pages/          # one file per screen (flat): Login, Register, Dashboard,
+│                   #   Organizations, Chatbots, ChatbotDetail (nested tabs:
+│                   #   Chat console / Knowledge / Widget), WidgetPreview, Providers
+├── App.tsx         # router + AuthProvider (protected/guest routes)
+├── main.tsx        # React root
+└── styles.css      # global hand-rolled CSS
 ```
+
+- Route definitions live inline in `App.tsx`; protected routes render under
+  `<RequireAuth><AppLayout/></RequireAuth>`.
+- `api/types.ts` mirrors the backend Pydantic DTOs field-for-field; provider/model
+  metadata is fetched from the live AI management API, never hardcoded.
+- Auth state is React Context only; there is no global state-management library.
+
+### Testing
+
+- Vitest with the jsdom environment, configured in `vite.config.ts` (`test` section).
+- Setup file wires `@testing-library/jest-dom/vitest` matchers; tests mock `fetch`
+  at the global boundary — no real backend calls.
+- Coverage targets the contract seams: `api/client.ts` (headers, error
+  normalization, 401 token clearing) and `auth/AuthContext.tsx` (hydration,
+  login, logout, invalid-token cleanup).
 
 ### API Client
 
