@@ -992,6 +992,15 @@ apps/api/app/
 - DB tests are marked `integration` so the default run stays fast and dependency-free.
 - Prerequisite for integration tests: `docker compose up -d postgres` and a valid `.env`.
 
+### Continuous Integration
+
+GitHub Actions (`.github/workflows/ci.yml`) is the project quality gate and runs on every push to `main` and on all pull requests. All jobs are blocking — failures must not be silenced. Two independent jobs:
+
+- **frontend** (Ubuntu, Node 22): `npm ci` → `npm run test` (Vitest) → `npm run build`, executed from `apps/frontend`.
+- **backend** (Ubuntu, Python 3.11): installs `requirements.txt`, provisions a service container mirroring the dev database (`pgvector/pgvector:pg16`, database/user/password `portableai`), applies schema via `alembic upgrade head`, then runs the full `pytest` suite (unit + identity + integration) from `apps/api`. `DATABASE_URL` and the development `JWT_SECRET` are provided as workflow-level environment values — no real secrets live in the repository or workflow.
+
+CI therefore enforces the same verification commands developers run locally; it never skips DB-backed tests and never uses `continue-on-error`.
+
 ## 26. Out of Scope (current milestone)
 
 WebSocket transport, widget per-install customization beyond the current public config, recursive crawling/sitemaps/JS rendering/OCR, background workers, reranking, hybrid BM25+vector search, semantic cache, document versioning, automatic re-indexing, more embedding providers, per-chatbot RAG config, billing, analytics, agents, MCP, idempotency keys, usage persistence, retries/fallback/circuit breaker, provider/model DB tables, provider enable/disable mutation, platform-admin role.
