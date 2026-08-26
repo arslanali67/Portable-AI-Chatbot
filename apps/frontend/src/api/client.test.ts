@@ -6,17 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { api, getToken, setToken } from "./client";
 import type { ApiError } from "./types";
+import { jsonResponse } from "../test/helpers";
 
 const fetchMock = vi.fn<typeof fetch>();
-
-function jsonResponse(status: number, body: unknown): Response {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => body,
-    text: async () => (body === null ? "" : JSON.stringify(body)),
-  } as unknown as Response;
-}
 
 function lastInit(): RequestInit {
   const call = fetchMock.mock.calls[fetchMock.mock.calls.length - 1];

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getToken, setToken } from "../api/client";
 import { AuthProvider, useAuth } from "../auth/AuthContext";
+import { jsonResponse } from "../test/helpers";
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -17,15 +18,6 @@ const USER = {
   is_active: true,
   created_at: "2026-01-01T00:00:00Z",
 };
-
-function jsonResponse(status: number, body: unknown): Response {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => body,
-    text: async () => JSON.stringify(body),
-  } as unknown as Response;
-}
 
 function deferredResponse(): { response: Promise<Response>; resolve: (r: Response) => void } {
   let resolve!: (r: Response) => void;

@@ -86,6 +86,7 @@ export default function WidgetConfigPage() {
     return (
       <div>
         <h2>Widget</h2>
+        {error && <div className="error-box">{error}</div>}
         <p className="muted">
           No public widget credential yet. Create one to embed this chatbot on your site.
         </p>

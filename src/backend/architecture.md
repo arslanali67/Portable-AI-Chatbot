@@ -1115,7 +1115,10 @@ apps/frontend/src/
   at the global boundary — no real backend calls.
 - Coverage targets the contract seams: `api/client.ts` (headers, error
   normalization, 401 token clearing) and `auth/AuthContext.tsx` (hydration,
-  login, logout, invalid-token cleanup).
+  login, logout, invalid-token cleanup); plus `streamChat()` SSE parsing
+  (chunk buffering, malformed-frame tolerance, `[DONE]`-less protocol,
+  abort propagation) and `WidgetConfigPage` flows (load/create/revoke,
+  embed snippet generation, preview route link).
 
 ### API Client
 
