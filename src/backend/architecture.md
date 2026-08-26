@@ -1117,8 +1117,11 @@ apps/frontend/src/
   normalization, 401 token clearing) and `auth/AuthContext.tsx` (hydration,
   login, logout, invalid-token cleanup); plus `streamChat()` SSE parsing
   (chunk buffering, malformed-frame tolerance, `[DONE]`-less protocol,
-  abort propagation) and `WidgetConfigPage` flows (load/create/revoke,
-  embed snippet generation, preview route link).
+  abort propagation); and page flows for `WidgetConfigPage`
+  (load/create/revoke, embed snippet generation, preview route link),
+  `KnowledgePage` (text/URL/file ingestion, search, deletion, refresh)
+  and `ChatConsolePage` (conversation selection/creation, message
+  history, optimistic send + SSE reconciliation).
 
 ### API Client
 

@@ -5,29 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setToken, streamChat } from "./client";
 import type { StreamEvent } from "./types";
-import { jsonResponse } from "../test/helpers";
+import { jsonResponse, sseResponse } from "../test/helpers";
 
 const fetchMock = vi.fn<typeof fetch>();
-
-function sseResponse(chunks: string[]): Response {
-  const encoder = new TextEncoder();
-  let index = 0;
-  const body = {
-    getReader() {
-      return {
-        read: async () => {
-          if (index < chunks.length) {
-            const value = encoder.encode(chunks[index]);
-            index += 1;
-            return { done: false, value };
-          }
-          return { done: true, value: undefined };
-        },
-      };
-    },
-  };
-  return { ok: true, status: 200, body } as unknown as Response;
-}
 
 async function collect(content: string, response: Response): Promise<StreamEvent[]> {
   fetchMock.mockResolvedValue(response);
