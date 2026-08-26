@@ -550,7 +550,7 @@ Application → AI Gateway → Provider Adapter → HTTP API
 
 ### Model & Provider Registration
 
-- `provider_id = "gemini"` (display name "Google Gemini" — Google's OpenAI-compatible API), model id from config/env (`OPENAI_MODEL`, default `gemini-3.6-flash`) registered through existing registries — extensible strings, no enums.
+- `provider_id = "gemini"` (display name "Google Gemini" — Google's OpenAI-compatible API), model id from config/env (`OPENAI_MODEL`; code default `gpt-4o-mini`, deployments set it explicitly, e.g. `gemini-3.6-flash`) registered through existing registries — extensible strings, no enums.
 - Enablement reuses `ProviderMetadata.enabled` / `ModelMetadata.enabled`; fake providers stay enabled for offline tests.
 
 ### Error Mapping

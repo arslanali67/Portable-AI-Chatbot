@@ -9,6 +9,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
 from app.main import app
 from tests.conftest import TestSessionLocal
 
@@ -232,11 +233,14 @@ def test_gemini_model_in_discovery() -> None:
     assert models, "gemini provider must expose at least one model"
     # Every model belongs to the gemini provider.
     assert all(m["provider_id"] == "gemini" for m in models)
-    # The required model is present and enabled when a key is configured.
-    gemini_flash = next((m for m in models if m["model_id"] == "gemini-3.6-flash"), None)
-    assert gemini_flash is not None
-    assert gemini_flash["display_name"] == "gemini-3.6-flash"
-    assert gemini_flash["enabled"] in (True, False)
+    # The configured model (settings.openai_model, from the OPENAI_MODEL env
+    # var; see app/core/config.py) must be exposed by discovery in every
+    # environment, whatever the deployment configures.
+    configured = next((m for m in models if m["model_id"] == settings.openai_model), None)
+    assert configured is not None
+    assert configured["display_name"] == settings.openai_model
+    # Enabled reflects actual config state (no key in CI - disabled).
+    assert configured["enabled"] in (True, False)
 
 
 def test_chatbot_create_with_gemini() -> None:

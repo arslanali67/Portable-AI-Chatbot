@@ -17,6 +17,8 @@ redis
 httpx
 pgvector
 pypdf
+# Test-only: generates sample PDFs for the file-ingestion suite (import name: fpdf).
+fpdf2
 python-docx
 beautifulsoup4
 pytest
