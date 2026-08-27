@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { api } from "../api/client";
@@ -30,7 +30,36 @@ export default function ChatbotsPage() {
   const [visibility, setVisibility] = useState<"public" | "private">("private");
   const [providerId, setProviderId] = useState("");
   const [modelId, setModelId] = useState("");
-  const [saving, setSaving] = useState(false);
+
+  // Tracks in-flight mutations by a stable key (e.g. "save", "activate:12").
+  // The ref guards against duplicate submissions synchronously (before React
+  // has re-rendered the disabled button); the state drives the UI.
+  const pendingRef = useRef<Set<string>>(new Set());
+  const [pendingActions, setPendingActions] = useState<Set<string>>(new Set());
+
+  function isPending(key: string): boolean {
+    return pendingActions.has(key);
+  }
+
+  function beginPending(key: string): boolean {
+    if (pendingRef.current.has(key)) {
+      return false;
+    }
+    pendingRef.current.add(key);
+    setPendingActions((prev) => new Set(prev).add(key));
+    return true;
+  }
+
+  function endPending(key: string) {
+    pendingRef.current.delete(key);
+    setPendingActions((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  }
+
+  const saving = isPending("save");
 
   const load = useCallback(() => {
     setLoading(true);
@@ -56,10 +85,21 @@ export default function ChatbotsPage() {
       .catch(() => setModels([]));
   }, [providerId]);
 
-  function openCreate() {
-    setEditing(null);
+  function resetForm() {
+    setName("");
+    setSlug("");
+    setDescription("");
+    setSystemPrompt("");
+    setWelcomeMessage("");
+    setLanguage("en");
+    setVisibility("private");
     setProviderId(providers[0]?.provider_id ?? "");
     setModelId("");
+  }
+
+  function openCreate() {
+    setEditing(null);
+    resetForm();
     setShowCreate(true);
   }
 
@@ -83,7 +123,9 @@ export default function ChatbotsPage() {
       setError("Select a provider and a model.");
       return;
     }
-    setSaving(true);
+    if (!beginPending("save")) {
+      return;
+    }
     setError(null);
     try {
       if (editing) {
@@ -116,11 +158,15 @@ export default function ChatbotsPage() {
     } catch (err) {
       setError(errorMessage(err));
     } finally {
-      setSaving(false);
+      endPending("save");
     }
   }
 
   async function changeStatus(bot: Chatbot, status: "activate" | "archive") {
+    const key = `${status}:${bot.id}`;
+    if (!beginPending(key)) {
+      return;
+    }
     try {
       if (status === "activate") {
         await api.activateChatbot(orgId, bot.id);
@@ -130,11 +176,20 @@ export default function ChatbotsPage() {
       load();
     } catch (err) {
       setError(errorMessage(err));
+    } finally {
+      endPending(key);
     }
   }
 
   async function remove(bot: Chatbot) {
+    const key = `delete:${bot.id}`;
+    if (pendingRef.current.has(key)) {
+      return;
+    }
     if (!window.confirm(`Delete chatbot "${bot.name}"? This cannot be undone.`)) {
+      return;
+    }
+    if (!beginPending(key)) {
       return;
     }
     try {
@@ -142,6 +197,8 @@ export default function ChatbotsPage() {
       load();
     } catch (err) {
       setError(errorMessage(err));
+    } finally {
+      endPending(key);
     }
   }
 
@@ -301,18 +358,30 @@ export default function ChatbotsPage() {
                     Edit
                   </button>
                   {bot.status === "draft" && (
-                    <button className="link-button" onClick={() => changeStatus(bot, "activate")}>
-                      Activate
+                    <button
+                      className="link-button"
+                      onClick={() => changeStatus(bot, "activate")}
+                      disabled={isPending(`activate:${bot.id}`)}
+                    >
+                      {isPending(`activate:${bot.id}`) ? "Activating…" : "Activate"}
                     </button>
                   )}
                   {bot.status === "active" && (
-                    <button className="link-button" onClick={() => changeStatus(bot, "archive")}>
-                      Archive
+                    <button
+                      className="link-button"
+                      onClick={() => changeStatus(bot, "archive")}
+                      disabled={isPending(`archive:${bot.id}`)}
+                    >
+                      {isPending(`archive:${bot.id}`) ? "Archiving…" : "Archive"}
                     </button>
                   )}
                   {bot.status !== "active" && (
-                    <button className="link-button danger" onClick={() => remove(bot)}>
-                      Delete
+                    <button
+                      className="link-button danger"
+                      onClick={() => remove(bot)}
+                      disabled={isPending(`delete:${bot.id}`)}
+                    >
+                      {isPending(`delete:${bot.id}`) ? "Deleting…" : "Delete"}
                     </button>
                   )}
                 </td>
