@@ -29,6 +29,7 @@ from app.repositories.conversation import ConversationRepository
 from app.repositories.membership import MembershipRepository
 from app.repositories.message import MessageRepository
 from app.schemas.chat_runtime import ChatRequest, ChatResponse
+from app.services.ai_provider_override import AIProviderOverrideService
 from app.services.context_builder import ContextBuilder
 from app.services.retrieval import (
     ChatbotNotFoundError as RetrievalChatbotNotFoundError,
@@ -116,6 +117,13 @@ class ChatRuntimeService:
 
         # 3. Call AI outside the DB transaction.
         try:
+            overrides = AIProviderOverrideService(self.messages.db)
+            if await overrides.is_provider_disabled(chatbot.provider_id):
+                raise AIProviderUnavailableError(
+                    f"provider disabled by admin: {chatbot.provider_id}"
+                )
+            if await overrides.is_model_disabled(chatbot.provider_id, chatbot.model_id):
+                raise AIModelNotFoundError(f"model disabled by admin: {chatbot.model_id}")
             response = await gateway.generate(request)
         except AIProviderUnavailableError as exc:
             raise RuntimeErrorAI(502, "AI provider unavailable") from exc
@@ -213,6 +221,13 @@ class ChatRuntimeService:
         chunks: list[str] = []
         finish_reason = "stop"
         try:
+            overrides = AIProviderOverrideService(self.messages.db)
+            if await overrides.is_provider_disabled(chatbot.provider_id):
+                raise AIProviderUnavailableError(
+                    f"provider disabled by admin: {chatbot.provider_id}"
+                )
+            if await overrides.is_model_disabled(chatbot.provider_id, chatbot.model_id):
+                raise AIModelNotFoundError(f"model disabled by admin: {chatbot.model_id}")
             async for event in gateway.stream(request):
                 if event.type.value == "token":
                     delta = event.data.get("delta", "")

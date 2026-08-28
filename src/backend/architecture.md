@@ -598,7 +598,21 @@ Client → AI Management API → AIManagementService → ProviderRegistry / Mode
 ### Platform vs Tenant Config
 
 - Providers/models are **platform infrastructure**; authenticated users may discover them.
-- Mutation (enable/disable, add/remove) is reserved for a future platform-admin/configuration system. No `platform_admin` role invented; no PATCH endpoints now.
+- Mutation is enable/disable only, never add/remove — new providers/models are still registered exclusively in code (`app/ai/registry.py`); the API can only toggle availability of what code already registers.
+- Mutation is gated by `require_platform_admin()`, a dependency independent of `require_organization_role` — no `MembershipRole`, including `OWNER`, satisfies it. Platform-admin status grants no access to any organization's tenant-scoped data.
+
+### Platform Admin Mutation
+
+```text
+PATCH /api/v1/ai/providers/{provider_id}        {"disabled": bool}
+PATCH /api/v1/ai/providers/{provider_id}/models/{model_id}   {"disabled": bool}
+```
+
+- `AIProviderOverrideService` (`app/services/ai_provider_override.py`) owns `ai_provider_overrides` / `ai_model_overrides` — thin tables storing only `disabled_at`/`disabled_by` per `provider_id` (or `(provider_id, model_id)`); no provider/model metadata is duplicated from the registries.
+- Effective enablement is `registry.enabled AND override.disabled_at IS NULL` — the DB can only narrow what code allows, never widen it. A provider/model absent from the override table behaves exactly as it does today (default: not disabled).
+- The check is added at the two existing call sites that already gate on `.enabled` — `ChatbotService._validate_provider_model()` and `ChatRuntimeService.chat()`/`stream_turn()` — both of which already hold an `AsyncSession`. `AIGateway` itself is unmodified and stays DB-independent.
+- Disabling blocks both new chatbot assignment (`422 InvalidProviderModelError`, same error the code-disabled case already produces) and execution of chatbots already configured with it (existing `RuntimeErrorAI` mapping via the gateway's existing `AIProviderUnavailableError`/`AIModelNotFoundError`) — no new error types, no new HTTP statuses.
+- `disabled_at`/`disabled_by` on the override row are the audit trail for this action; no separate audit-log subsystem exists or is introduced by this feature.
 
 ### Chatbot Provider/Model Validation
 
@@ -608,8 +622,8 @@ Client → AI Management API → AIManagementService → ProviderRegistry / Mode
 
 ### Future Extension Points
 
-- DB-backed provider/model configuration (separate milestone; no `providers`/`models`/`provider_credentials` tables now).
-- Platform admin UI/API for enable/disable.
+- Full DB-backed provider/model CRUD (creating new providers/models via API, not just toggling code-registered ones) remains out of scope; registration stays code-only.
+- A full historical audit log of every enable/disable event (beyond the current-state `disabled_at`/`disabled_by`) is a possible future enhancement, not required today.
 - Capability-based provider/model filtering for the dashboard.
 
 ## 16. RAG / Knowledge Architecture

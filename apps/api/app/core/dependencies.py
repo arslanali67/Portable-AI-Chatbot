@@ -82,6 +82,21 @@ async def require_organization_membership(
     return organization, membership
 
 
+async def require_platform_admin(user: User = Depends(get_current_user)) -> User:
+    """Require the current user to be a platform admin.
+
+    Independent of organization membership/roles — no MembershipRole,
+    including OWNER, satisfies this. Platform-admin status grants no
+    access to any organization's tenant-scoped data.
+    """
+    if not user.is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform admin access required",
+        )
+    return user
+
+
 def require_organization_role(required_role: MembershipRole):
     """Dependency factory: require membership with at least the given role.
 

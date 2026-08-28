@@ -6,6 +6,7 @@ export interface User {
   email: string;
   full_name: string;
   is_active: boolean;
+  is_platform_admin: boolean;
   created_at: string;
 }
 
@@ -122,6 +123,10 @@ export interface ModelInfo {
   max_output_tokens: number;
   enabled: boolean;
   capabilities: AICapability[];
+}
+
+export interface DisabledUpdate {
+  disabled: boolean;
 }
 
 export type SourceType = "text" | "file" | "url";

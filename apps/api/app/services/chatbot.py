@@ -8,6 +8,7 @@ from app.models import Chatbot
 from app.models.enums import ChatbotStatus
 from app.repositories.chatbot import ChatbotRepository
 from app.schemas.chatbot import ChatbotCreate, ChatbotUpdate
+from app.services.ai_provider_override import AIProviderOverrideService
 
 
 class ChatbotNotFoundError(Exception):
@@ -35,11 +36,14 @@ _ALLOWED_TRANSITIONS = {
 }
 
 
-def _validate_provider_model(provider_id: str, model_id: str) -> None:
-    """Validate provider/model pair against the registries.
+async def _validate_provider_model(
+    db: AsyncSession, provider_id: str, model_id: str
+) -> None:
+    """Validate provider/model pair against the registries and platform-admin overrides.
 
-    Chain: provider exists → provider enabled → model exists → model belongs
-    to provider → model enabled.
+    Chain: provider exists → provider enabled (registry) → provider not
+    admin-disabled → model exists → model belongs to provider → model
+    enabled (registry) → model not admin-disabled.
     """
     if not provider_registry.exists(provider_id):
         raise InvalidProviderModelError("unknown provider")
@@ -47,10 +51,16 @@ def _validate_provider_model(provider_id: str, model_id: str) -> None:
     if not provider.metadata.enabled:
         raise InvalidProviderModelError("provider is disabled")
 
+    overrides = AIProviderOverrideService(db)
+    if await overrides.is_provider_disabled(provider_id):
+        raise InvalidProviderModelError("provider is disabled")
+
     model = model_registry.get(provider_id, model_id)
     if model is None:
         raise InvalidProviderModelError("unknown model for provider")
     if not model.enabled:
+        raise InvalidProviderModelError("model is disabled")
+    if await overrides.is_model_disabled(provider_id, model_id):
         raise InvalidProviderModelError("model is disabled")
 
 
@@ -65,7 +75,9 @@ class ChatbotService:
         if existing is not None:
             raise DuplicateSlugError()
 
-        _validate_provider_model(payload.provider_id, payload.model_id)
+        await _validate_provider_model(
+            self.chatbots.db, payload.provider_id, payload.model_id
+        )
 
         chatbot = await self.chatbots.create(
             organization_id=organization_id,
@@ -111,7 +123,8 @@ class ChatbotService:
 
         # If either side of the pair changes, re-validate the combined pair.
         if payload.provider_id is not None or payload.model_id is not None:
-            _validate_provider_model(
+            await _validate_provider_model(
+                self.chatbots.db,
                 payload.provider_id or chatbot.provider_id,
                 payload.model_id or chatbot.model_id,
             )

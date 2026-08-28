@@ -88,13 +88,13 @@ In scope:
 - FastAPI application skeleton, `/` and `/api/v1/health` endpoints
 - Config, security, logging, dependency wiring
 - Centralized async database foundation (SQLAlchemy 2.x + PostgreSQL + pgvector + Alembic)
-- Multi-tenant identity system: users, organizations, memberships, email+password auth, JWT access tokens
+- Multi-tenant identity system: users, organizations, memberships, email+password auth, JWT access tokens; a separate, non-tenant-scoped `users.is_platform_admin` flag for platform-level administration, orthogonal to organization membership/roles
 - Chatbot CRUD + configuration, tenant-scoped, with lifecycle (draft/active/archived) and role permissions
 - Provider-agnostic AI gateway foundation: contracts, registries, capabilities, fake providers, error hierarchy (no real provider calls)
 - Conversation + message storage (persistent chat history), tenant-scoped, immutable messages
 - Chat runtime: one turn = save user message, call AI Gateway, save assistant message
 - Real provider integration: OpenAI-compatible HTTP adapter (credentials from env, mocked in tests); fake providers stay default for offline tests
-- Provider & model management: read-only discovery APIs over the registries; safe DTOs, no credential exposure, chatbot provider/model validation
+- Provider & model management: discovery APIs over the registries; safe DTOs, no credential exposure, chatbot provider/model validation; platform-admin-gated enable/disable mutation via a thin DB override table (registries remain the sole source of executable adapter definitions, capabilities, and credentials — the DB never stores them)
 - RAG/knowledge foundation: text ingestion → normalize → chunk → embeddings → pgvector storage → tenant-scoped retrieval
 - RAG runtime integration: ChatRuntime retrieves knowledge via RetrievalService and assembles context via ContextBuilder (above AIGateway); system prompt authoritative
 - Real embeddings (OpenAI-compatible, mocked in tests) + file ingestion (txt/md/pdf/docx) with deduplication; fake embeddings stay default for offline tests
@@ -111,7 +111,7 @@ Explicitly out of scope (do not implement yet):
 - WebSocket transport, idempotency keys, retries/fallback/circuit breaker
 - Reranking, hybrid search, semantic cache, document versioning, recursive crawling/sitemaps/JS rendering/OCR, per-chatbot RAG config, background workers
 - Widget customization UI beyond the current public config (themes/languages per-install), public widget analytics
-- API keys in DB, provider/model DB tables, enable/disable mutation, platform-admin role
+- API keys in DB, full DB-backed provider/model CRUD (registries remain the code-owned source of truth for adapter definitions, capabilities, and credentials — only an admin-controlled enable/disable override is DB-backed)
 - Redis usage (rate limiter is in-memory MVP; Redis-backed backend is a documented seam)
 - LangChain, LlamaIndex
 - Integrations, billing, analytics

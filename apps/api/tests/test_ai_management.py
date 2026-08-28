@@ -4,6 +4,7 @@ provider/model validation.
 Require Docker PostgreSQL + alembic upgrade head. Run: pytest -m identity
 """
 
+import asyncio
 import uuid
 
 import pytest
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import settings
 from app.main import app
+from app.models import User
 from tests.conftest import TestSessionLocal
 
 pytestmark = pytest.mark.identity
@@ -51,6 +53,22 @@ def _auth(token: str) -> dict[str, str]:
 def _setup_token() -> str:
     email = _email(f"user{uuid.uuid4().hex[:6]}")
     return _login(_register(email)["email"])
+
+
+async def _promote_platform_admin(user_id: int) -> None:
+    async with TestSessionLocal() as session:
+        user = await session.get(User, user_id)
+        user.is_platform_admin = True
+        await session.commit()
+
+
+def _setup_admin_token() -> str:
+    """No self-service promotion endpoint exists by design — the flag is
+    set via direct DB access, exactly as it would be in production."""
+    email = _email(f"admin{uuid.uuid4().hex[:6]}")
+    user = _register(email)
+    asyncio.run(_promote_platform_admin(user["id"]))
+    return _login(email)
 
 
 def _create_org(token: str) -> int:
@@ -273,3 +291,128 @@ def test_chatbot_update_validation() -> None:
         headers=_auth(token),
     )
     assert r.status_code == 422
+
+
+# --- Provider/model admin mutation (M5) ---
+
+
+def test_provider_update_unauthenticated_401() -> None:
+    assert (
+        client.patch("/api/v1/ai/providers/fake-b", json={"disabled": True}).status_code
+        == 401
+    )
+
+
+def test_provider_update_plain_member_403() -> None:
+    token = _setup_token()
+    r = client.patch(
+        "/api/v1/ai/providers/fake-b", json={"disabled": True}, headers=_auth(token)
+    )
+    assert r.status_code == 403
+
+
+def test_provider_update_org_owner_403() -> None:
+    """An organization OWNER — the highest existing MembershipRole — must
+    not satisfy require_platform_admin. The two authorization axes are
+    independent."""
+    token = _setup_token()
+    _create_org(token)  # token's user is now OWNER of an org, not a platform admin
+    r = client.patch(
+        "/api/v1/ai/providers/fake-b", json={"disabled": True}, headers=_auth(token)
+    )
+    assert r.status_code == 403
+
+
+def test_provider_update_unknown_provider_404() -> None:
+    token = _setup_admin_token()
+    r = client.patch(
+        "/api/v1/ai/providers/nope", json={"disabled": True}, headers=_auth(token)
+    )
+    assert r.status_code == 404
+
+
+def test_model_update_unknown_model_404() -> None:
+    token = _setup_admin_token()
+    r = client.patch(
+        "/api/v1/ai/providers/fake-a/models/nope",
+        json={"disabled": True},
+        headers=_auth(token),
+    )
+    assert r.status_code == 404
+
+
+def test_model_update_extra_field_422() -> None:
+    token = _setup_admin_token()
+    r = client.patch(
+        "/api/v1/ai/providers/fake-a/models/fake-model-large",
+        json={"disabled": True, "display_name": "hacked"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 422
+
+
+def test_provider_disable_blocks_discovery_and_new_assignment() -> None:
+    token = _setup_admin_token()
+    try:
+        r = client.patch(
+            "/api/v1/ai/providers/fake-b", json={"disabled": True}, headers=_auth(token)
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["enabled"] is False
+
+        # Reflected immediately in the existing read-only discovery endpoints.
+        listed = client.get("/api/v1/ai/providers", headers=_auth(token)).json()
+        fake_b = next(p for p in listed if p["provider_id"] == "fake-b")
+        assert fake_b["enabled"] is False
+
+        # Blocks new chatbot assignment — same error shape as a code-disabled provider.
+        org_id = _create_org(token)
+        blocked = _create_bot(token, org_id, provider_id="fake-b", model_id="fake-model-small")
+        assert blocked.status_code == 422
+        assert "disabled" in blocked.json()["detail"]
+    finally:
+        client.patch(
+            "/api/v1/ai/providers/fake-b", json={"disabled": False}, headers=_auth(token)
+        )
+
+    r = client.get("/api/v1/ai/providers/fake-b", headers=_auth(token))
+    assert r.json()["enabled"] is True
+
+    # Re-enabled: assignment works again.
+    org_id = _create_org(token)
+    ok = _create_bot(token, org_id, provider_id="fake-b", model_id="fake-model-small")
+    assert ok.status_code == 201
+
+
+def test_model_disable_blocks_assignment_without_affecting_sibling_model() -> None:
+    token = _setup_admin_token()
+    try:
+        r = client.patch(
+            "/api/v1/ai/providers/fake-a/models/fake-model-large",
+            json={"disabled": True},
+            headers=_auth(token),
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["enabled"] is False
+
+        org_id = _create_org(token)
+        blocked = _create_bot(
+            token, org_id, provider_id="fake-a", model_id="fake-model-large"
+        )
+        assert blocked.status_code == 422
+        assert "disabled" in blocked.json()["detail"]
+
+        # fake-model-small on the same provider is unaffected.
+        ok = _create_bot(token, org_id, provider_id="fake-a", model_id="fake-model-small")
+        assert ok.status_code == 201
+    finally:
+        client.patch(
+            "/api/v1/ai/providers/fake-a/models/fake-model-large",
+            json={"disabled": False},
+            headers=_auth(token),
+        )
+
+    r = client.get(
+        "/api/v1/ai/providers/fake-a/models/fake-model-large", headers=_auth(token)
+    )
+    assert r.json()["enabled"] is True

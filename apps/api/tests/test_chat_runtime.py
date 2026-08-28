@@ -4,6 +4,7 @@ message. Deterministic, no network (FakeAIProvider).
 Require Docker PostgreSQL + alembic upgrade head. Run: pytest -m identity
 """
 
+import asyncio
 import uuid
 
 import pytest
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from app.main import app
+from app.models import User
 from tests.conftest import TestSessionLocal
 
 pytestmark = pytest.mark.identity
@@ -88,6 +90,13 @@ def _chat(token: str, org_id: int, conv_id: int, content: str = "Hello", **overr
         json=payload,
         headers=_auth(token),
     )
+
+
+async def _promote_platform_admin(user_id: int) -> None:
+    async with TestSessionLocal() as session:
+        user = await session.get(User, user_id)
+        user.is_platform_admin = True
+        await session.commit()
 
 
 def _setup() -> tuple[str, str, int, int, int]:
@@ -678,3 +687,42 @@ def test_chat_with_mocked_openai_provider() -> None:
         assert all("sk-" not in meta for _, _, _, meta in rows)
     finally:
         real_gateway.providers, real_gateway.models = original_providers, original_models
+
+
+def test_chat_blocked_when_provider_disabled_by_admin_after_chatbot_created() -> None:
+    """A platform-admin disable blocks execution of a chatbot already
+    configured with that provider, not just new assignment — reuses the
+    same RuntimeErrorAI mapping the gateway's own disabled-provider error
+    already produces. Uses fake-b (not the fake-a default every other
+    _setup() helper relies on) and always re-enables in finally."""
+    email = _email(f"admin{uuid.uuid4().hex[:6]}")
+    user = _register(email)
+    asyncio.run(_promote_platform_admin(user["id"]))
+    token = _login(email)
+
+    org_id = _create_org(token, "Org", _slug(f"org{uuid.uuid4().hex[:6]}"))
+    bot_id = _create_bot(
+        token,
+        org_id,
+        _slug(f"bot{uuid.uuid4().hex[:6]}"),
+        provider_id="fake-b",
+        model_id="fake-model-small",
+    )
+    conv_id = _create_conv(token, org_id, bot_id)
+
+    try:
+        r = client.patch(
+            "/api/v1/ai/providers/fake-b", json={"disabled": True}, headers=_auth(token)
+        )
+        assert r.status_code == 200, r.text
+
+        blocked = _chat(token, org_id, conv_id)
+        assert blocked.status_code == 502, blocked.text
+    finally:
+        client.patch(
+            "/api/v1/ai/providers/fake-b", json={"disabled": False}, headers=_auth(token)
+        )
+
+    # Re-enabled: execution works again.
+    ok = _chat(token, org_id, conv_id)
+    assert ok.status_code == 200, ok.text

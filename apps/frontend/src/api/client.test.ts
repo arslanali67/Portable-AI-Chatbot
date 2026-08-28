@@ -65,6 +65,7 @@ describe("api client", () => {
       email: "u@example.com",
       full_name: "U",
       is_active: true,
+      is_platform_admin: false,
       created_at: "2026-01-01T00:00:00Z",
     };
     fetchMock.mockResolvedValue(jsonResponse(200, user));

@@ -12,4 +12,5 @@ class UserResponse(BaseModel):
     email: str
     full_name: str
     is_active: bool
+    is_platform_admin: bool
     created_at: datetime

@@ -5,6 +5,7 @@ import type {
   ChatbotUpdate,
   Conversation,
   ConversationList,
+  DisabledUpdate,
   KnowledgeDocument,
   KnowledgeDocumentList,
   KnowledgeSearchResult,
@@ -240,12 +241,24 @@ export const api = {
     );
   },
 
-  // AI management (read-only)
+  // AI management
   listProviders(): Promise<Provider[]> {
     return request<Provider[]>("/api/v1/ai/providers");
   },
   listModels(providerId: string): Promise<ModelInfo[]> {
     return request<ModelInfo[]>(`/api/v1/ai/providers/${providerId}/models`);
+  },
+  updateProvider(providerId: string, data: DisabledUpdate): Promise<Provider> {
+    return request<Provider>(`/api/v1/ai/providers/${providerId}`, {
+      method: "PATCH",
+      ...jsonBody(data),
+    });
+  },
+  updateModel(providerId: string, modelId: string, data: DisabledUpdate): Promise<ModelInfo> {
+    return request<ModelInfo>(`/api/v1/ai/providers/${providerId}/models/${modelId}`, {
+      method: "PATCH",
+      ...jsonBody(data),
+    });
   },
 
   // Conversations

@@ -16,6 +16,7 @@ const USER = {
   email: "user@example.com",
   full_name: "Test User",
   is_active: true,
+  is_platform_admin: false,
   created_at: "2026-01-01T00:00:00Z",
 };
 

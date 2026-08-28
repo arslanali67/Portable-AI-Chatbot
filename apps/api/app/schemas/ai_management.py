@@ -3,9 +3,21 @@
 Never serialize credentials, base URLs, or registry internals.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.ai.capabilities import AICapability
+
+
+class ProviderUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    disabled: bool
+
+
+class ModelUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    disabled: bool
 
 
 class ProviderResponse(BaseModel):
