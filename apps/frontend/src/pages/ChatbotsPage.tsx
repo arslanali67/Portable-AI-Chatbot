@@ -210,9 +210,14 @@ export default function ChatbotsPage() {
     <section>
       <div className="page-head">
         <h1>Chatbots</h1>
-        <button className="button" onClick={openCreate}>
-          New chatbot
-        </button>
+        <div className="actions">
+          <Link className="button secondary" to={`/organizations/${orgId}/settings`}>
+            Settings
+          </Link>
+          <button className="button" onClick={openCreate}>
+            New chatbot
+          </button>
+        </div>
       </div>
 
       {error && <div className="error-box">{error}</div>}

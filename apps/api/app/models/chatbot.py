@@ -50,4 +50,10 @@ class Chatbot(Base):
     )
 
     organization: Mapped["Organization"] = relationship(back_populates="chatbots")
-    conversations: Mapped[list["Conversation"]] = relationship(back_populates="chatbot")
+    # conversations.chatbot_id has ON DELETE CASCADE at the database level
+    # (migration 0009) — passive_deletes=True tells the ORM to trust that
+    # constraint instead of loading the collection and nulling the
+    # (NOT NULL) foreign key on delete.
+    conversations: Mapped[list["Conversation"]] = relationship(
+        back_populates="chatbot", passive_deletes=True
+    )

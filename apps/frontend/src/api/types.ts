@@ -26,6 +26,27 @@ export interface OrganizationCreate {
   slug: string;
 }
 
+export interface OrganizationUpdate {
+  name: string;
+}
+
+export type MembershipRole = "owner" | "admin" | "member";
+
+export interface Membership {
+  id: number;
+  organization_id: number;
+  user_id: number;
+  role: MembershipRole;
+  created_at: string;
+  user_email: string;
+  user_full_name: string;
+}
+
+export interface MembershipCreate {
+  email: string;
+  role: MembershipRole;
+}
+
 export type ChatbotStatus = "draft" | "active" | "archived";
 export type ChatbotVisibility = "public" | "private";
 

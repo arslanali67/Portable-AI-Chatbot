@@ -24,5 +24,14 @@ class Organization(Base):
     memberships: Mapped[list["Membership"]] = relationship(
         back_populates="organization", cascade="all, delete-orphan"
     )
-    chatbots: Mapped[list["Chatbot"]] = relationship(back_populates="organization")
-    conversations: Mapped[list["Conversation"]] = relationship(back_populates="organization")
+    # chatbots.organization_id and conversations.organization_id both have
+    # ON DELETE CASCADE at the database level (migration 0003; migration 0009
+    # for conversations) — passive_deletes=True tells the ORM to trust those
+    # constraints instead of loading the collections and nulling the
+    # (NOT NULL) foreign keys on delete.
+    chatbots: Mapped[list["Chatbot"]] = relationship(
+        back_populates="organization", passive_deletes=True
+    )
+    conversations: Mapped[list["Conversation"]] = relationship(
+        back_populates="organization", passive_deletes=True
+    )

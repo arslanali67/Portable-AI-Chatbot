@@ -7,10 +7,14 @@ from app.models import Organization, User
 from app.models.enums import MembershipRole
 from app.repositories.membership import MembershipRepository
 from app.repositories.organization import OrganizationRepository
-from app.schemas.organization import OrganizationCreate
+from app.schemas.organization import OrganizationCreate, OrganizationUpdate
 
 
 class DuplicateSlugError(Exception):
+    pass
+
+
+class OrganizationNotFoundError(Exception):
     pass
 
 
@@ -43,3 +47,21 @@ class OrganizationService:
 
     async def list_for_user(self, user: User) -> list[Organization]:
         return await self.organizations.list_for_user(user.id)
+
+    async def get(self, organization_id: int) -> Organization:
+        organization = await self.organizations.get(organization_id)
+        if organization is None:
+            raise OrganizationNotFoundError()
+        return organization
+
+    async def update(self, organization_id: int, payload: OrganizationUpdate) -> Organization:
+        organization = await self.get(organization_id)
+        organization = await self.organizations.update(organization, name=payload.name)
+        await self.organizations.db.commit()
+        await self.organizations.db.refresh(organization)
+        return organization
+
+    async def delete(self, organization_id: int) -> None:
+        organization = await self.get(organization_id)
+        await self.organizations.delete(organization)
+        await self.organizations.db.commit()

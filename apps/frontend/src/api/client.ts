@@ -8,11 +8,15 @@ import type {
   KnowledgeDocument,
   KnowledgeDocumentList,
   KnowledgeSearchResult,
+  Membership,
+  MembershipCreate,
+  MembershipRole,
   Message,
   MessageList,
   ModelInfo,
   Organization,
   OrganizationCreate,
+  OrganizationUpdate,
   Provider,
   StreamEvent,
   TokenResponse,
@@ -137,6 +141,45 @@ export const api = {
   },
   createOrganization(data: OrganizationCreate): Promise<Organization> {
     return request<Organization>("/api/v1/organizations", { method: "POST", ...jsonBody(data) });
+  },
+  getOrganization(organizationId: number): Promise<Organization> {
+    return request<Organization>(`/api/v1/organizations/${organizationId}`);
+  },
+  updateOrganization(organizationId: number, data: OrganizationUpdate): Promise<Organization> {
+    return request<Organization>(`/api/v1/organizations/${organizationId}`, {
+      method: "PATCH",
+      ...jsonBody(data),
+    });
+  },
+  deleteOrganization(organizationId: number): Promise<void> {
+    return request<void>(`/api/v1/organizations/${organizationId}`, { method: "DELETE" });
+  },
+
+  // Members
+  listMembers(organizationId: number): Promise<Membership[]> {
+    return request<Membership[]>(`/api/v1/organizations/${organizationId}/members`);
+  },
+  addMember(organizationId: number, data: MembershipCreate): Promise<Membership> {
+    return request<Membership>(`/api/v1/organizations/${organizationId}/members`, {
+      method: "POST",
+      ...jsonBody(data),
+    });
+  },
+  updateMemberRole(
+    organizationId: number,
+    membershipId: number,
+    role: MembershipRole,
+  ): Promise<Membership> {
+    return request<Membership>(
+      `/api/v1/organizations/${organizationId}/members/${membershipId}`,
+      { method: "PATCH", ...jsonBody({ role }) },
+    );
+  },
+  removeMember(organizationId: number, membershipId: number): Promise<void> {
+    return request<void>(
+      `/api/v1/organizations/${organizationId}/members/${membershipId}`,
+      { method: "DELETE" },
+    );
   },
 
   // Chatbots

@@ -30,3 +30,10 @@ class OrganizationRepository:
             .order_by(Organization.id)
         )
         return list(result.scalars().all())
+
+    async def update(self, organization: Organization, *, name: str) -> Organization:
+        organization.name = name
+        return organization
+
+    async def delete(self, organization: Organization) -> None:
+        await self.db.delete(organization)

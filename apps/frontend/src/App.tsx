@@ -8,6 +8,7 @@ import ChatbotsPage from "./pages/ChatbotsPage";
 import DashboardPage from "./pages/DashboardPage";
 import LoginPage from "./pages/LoginPage";
 import OrganizationsPage from "./pages/OrganizationsPage";
+import OrganizationSettingsPage from "./pages/OrganizationSettingsPage";
 import ProvidersPage from "./pages/ProvidersPage";
 import RegisterPage from "./pages/RegisterPage";
 import WidgetPreviewPage from "./pages/WidgetPreviewPage";
@@ -37,6 +38,10 @@ export default function App() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/organizations" element={<OrganizationsPage />} />
             <Route path="/organizations/:organizationId" element={<ChatbotsPage />} />
+            <Route
+              path="/organizations/:organizationId/settings"
+              element={<OrganizationSettingsPage />}
+            />
             <Route path="/organizations/:organizationId/chatbots/:chatbotId/*" element={<ChatbotDetailPage />} />
             <Route path="/providers" element={<ProvidersPage />} />
           </Route>
