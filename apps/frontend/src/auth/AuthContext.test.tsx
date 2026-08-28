@@ -176,4 +176,37 @@ describe("AuthContext", () => {
     expect(getToken()).toBeNull();
     expect(state().user).toBeNull();
   });
+
+  it("logout calls the server endpoint before clearing local state", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockImplementation(async (input) => {
+      const path = String(input);
+      if (path.endsWith("/api/v1/auth/login")) {
+        return jsonResponse(200, { access_token: "jwt-token", token_type: "bearer" });
+      }
+      if (path.endsWith("/api/v1/auth/me")) {
+        return jsonResponse(200, USER);
+      }
+      if (path.endsWith("/api/v1/auth/logout")) {
+        return jsonResponse(204, null);
+      }
+      return jsonResponse(404, { detail: "Not found" });
+    });
+
+    render(
+      <AuthProvider>
+        <TestConsumer />
+      </AuthProvider>,
+    );
+    await waitFor(() => expect(state().loading).toBe(false));
+    await user.click(screen.getByRole("button", { name: "login" }));
+    await waitFor(() => expect(state().user).not.toBeNull());
+
+    await user.click(screen.getByRole("button", { name: "logout" }));
+
+    await waitFor(() => expect(callsTo("/api/v1/auth/logout")).toHaveLength(1));
+    expect(callsTo("/api/v1/auth/logout")[0]?.[1]?.method).toBe("POST");
+    expect(getToken()).toBeNull();
+    expect(state().user).toBeNull();
+  });
 });

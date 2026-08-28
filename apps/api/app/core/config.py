@@ -26,7 +26,13 @@ class Settings(BaseSettings):
     # Security
     jwt_secret: str = Field(..., description="JWT signing secret — set in .env")
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
+    access_token_expire_minutes: int = 15
+    refresh_token_expire_days: int = 30
+    password_reset_token_expire_minutes: int = 60
+
+    # Frontend origin used to build links embedded in outbound content
+    # (currently only the password-reset link, dev-stub logged not emailed).
+    frontend_base_url: str = "http://localhost:3000"
 
     # Database
     database_url: str = Field(

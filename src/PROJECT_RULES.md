@@ -70,7 +70,7 @@ apps/api/
 ## 6. Security
 
 - Passwords hashed with bcrypt; never stored in plaintext.
-- Auth via short-lived access JWTs (refresh tokens are out of scope).
+- Auth via short-lived access JWTs backed by DB-tracked, single-use rotating refresh tokens (httpOnly cookie; theft detected via reuse, revoking the whole token family).
 - Tenant isolation is enforced at the data layer, not only the API layer.
 - Secrets live in environment variables, never in code or committed files.
 
@@ -89,6 +89,7 @@ In scope:
 - Config, security, logging, dependency wiring
 - Centralized async database foundation (SQLAlchemy 2.x + PostgreSQL + pgvector + Alembic)
 - Multi-tenant identity system: users, organizations, memberships, email+password auth, JWT access tokens; a separate, non-tenant-scoped `users.is_platform_admin` flag for platform-level administration, orthogonal to organization membership/roles
+- Session hardening: rotating refresh tokens (httpOnly cookie, DB-tracked, reuse-detection) shortening the access-token XSS window; self-service password reset (DB-backed single-use token, generic enumeration-safe responses, resets revoke all refresh-token sessions). Email delivery is a log-only dev stub pending a chosen provider — see architecture.md's Refresh Token Rotation & Password Reset section.
 - Chatbot CRUD + configuration, tenant-scoped, with lifecycle (draft/active/archived) and role permissions
 - Provider-agnostic AI gateway foundation: contracts, registries, capabilities, fake providers, error hierarchy (no real provider calls)
 - Conversation + message storage (persistent chat history), tenant-scoped, immutable messages
@@ -106,7 +107,7 @@ In scope:
 - Deployment: backend + frontend Dockerfiles, production docker-compose (PostgreSQL + API + frontend reverse proxy), environment documentation, `.env.example` with safe placeholders
 
 Explicitly out of scope (do not implement yet):
-- OAuth (Google/GitHub login), password reset, email verification, MFA, refresh tokens
+- OAuth (Google/GitHub login), email verification, MFA (password reset and refresh tokens are now in scope — see the session-hardening bullet above; real transactional email delivery for password reset remains a follow-up pending a provider choice)
 - More real providers (Anthropic, Kimi, DeepSeek, etc.), credential management, BYOK, credential management UI (credentials remain environment/platform controlled)
 - WebSocket transport, idempotency keys, retries/fallback/circuit breaker
 - Reranking, hybrid search, semantic cache, document versioning, recursive crawling/sitemaps/JS rendering/OCR, per-chatbot RAG config, background workers

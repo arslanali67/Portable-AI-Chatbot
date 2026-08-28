@@ -129,4 +129,77 @@ describe("api client", () => {
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/auth/me");
   });
+
+  it("sends credentials:include so the httpOnly refresh cookie can flow", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { id: 7 }));
+
+    await api.me();
+
+    expect(lastInit().credentials).toBe("include");
+  });
+
+  it("retries the original request once after a silent refresh succeeds on 401", async () => {
+    setToken("expired-token");
+    const user = {
+      id: 7,
+      email: "u@example.com",
+      full_name: "U",
+      is_active: true,
+      is_platform_admin: false,
+      created_at: "2026-01-01T00:00:00Z",
+    };
+    let meCalls = 0;
+    fetchMock.mockImplementation(async (input) => {
+      const path = String(input);
+      if (path.endsWith("/auth/refresh")) {
+        return jsonResponse(200, { access_token: "new-token", token_type: "bearer" });
+      }
+      if (path.endsWith("/auth/me")) {
+        meCalls += 1;
+        return meCalls === 1 ? jsonResponse(401, { detail: "expired" }) : jsonResponse(200, user);
+      }
+      return jsonResponse(404, { detail: "Not found" });
+    });
+
+    const result = await api.me();
+
+    expect(result).toEqual(user);
+    expect(getToken()).toBe("new-token");
+    // /auth/me (401) -> /auth/refresh (200) -> /auth/me retried (200)
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not loop when the retried request also gets a 401", async () => {
+    setToken("expired-token");
+    fetchMock.mockImplementation(async (input) => {
+      const path = String(input);
+      if (path.endsWith("/auth/refresh")) {
+        return jsonResponse(200, { access_token: "new-token", token_type: "bearer" });
+      }
+      return jsonResponse(401, { detail: "still invalid" });
+    });
+
+    await expect(api.me()).rejects.toMatchObject({ status: 401 });
+
+    // /auth/me (401) -> /auth/refresh (200) -> /auth/me retried (401) -> stop.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(getToken()).toBeNull();
+  });
+
+  it("propagates the original 401 without retrying when refresh itself fails", async () => {
+    setToken("expired-token");
+    fetchMock.mockImplementation(async (input) => {
+      const path = String(input);
+      if (path.endsWith("/auth/refresh")) {
+        return jsonResponse(401, { detail: "no refresh token" });
+      }
+      return jsonResponse(401, { detail: "expired" });
+    });
+
+    await expect(api.me()).rejects.toMatchObject({ status: 401 });
+
+    // /auth/me (401) -> /auth/refresh (401) -> stop, no further retry.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(getToken()).toBeNull();
+  });
 });

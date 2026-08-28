@@ -1,5 +1,8 @@
-"""Security primitives: JWT access tokens and bcrypt password hashing."""
+"""Security primitives: JWT access tokens, bcrypt password hashing, and
+opaque bearer tokens (refresh / password-reset)."""
 
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -46,3 +49,16 @@ def decode_access_token(token: str) -> dict:
     if payload.get("type") != ACCESS_TOKEN_TYPE:
         raise jwt.InvalidTokenError("token type is not access")
     return payload
+
+
+def generate_token() -> str:
+    """High-entropy opaque token for refresh / password-reset use."""
+    return secrets.token_urlsafe(32)
+
+
+def hash_token(raw_token: str) -> str:
+    """SHA-256 hex digest — refresh and password-reset tokens are stored
+    only as this hash, never plaintext (a stronger bar than
+    widget_sessions.session_token, since these grant full account access).
+    Shared by both token types so the hash-and-compare logic lives once."""
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()

@@ -52,3 +52,8 @@ widget_rate_limiter: RateLimiter = build_rate_limiter(limit=30, window_seconds=3
 
 # Per-IP limiter with generous ceiling (MVP; process-local).
 widget_ip_rate_limiter: RateLimiter = build_rate_limiter(limit=1000, window_seconds=3600)
+
+# Password-reset request limiters — same dual per-key/per-IP shape as the
+# widget limiters above, reusing the same abstraction (no new mechanism).
+password_reset_email_rate_limiter: RateLimiter = build_rate_limiter(limit=5, window_seconds=3600)
+password_reset_ip_rate_limiter: RateLimiter = build_rate_limiter(limit=20, window_seconds=3600)

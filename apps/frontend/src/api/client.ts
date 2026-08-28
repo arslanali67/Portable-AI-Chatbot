@@ -74,7 +74,41 @@ function normalizeError(status: number, body: unknown): ApiError {
   return { status, detail, message: typeof detail === "string" ? detail : "Request failed" };
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+// Paths that must never trigger a refresh-retry themselves — refresh/login/
+// register/logout failing with 401 means "not authenticated," not "needs a
+// refresh," and retrying them would either loop or make no sense.
+const NO_REFRESH_RETRY_SUFFIXES = [
+  "/api/v1/auth/login",
+  "/api/v1/auth/register",
+  "/api/v1/auth/refresh",
+  "/api/v1/auth/logout",
+];
+
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function attemptRefresh(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/v1/auth/refresh`, {
+          method: "POST",
+          credentials: "include",
+        });
+        if (!response.ok) return false;
+        const data = (await response.json()) as { access_token: string };
+        setToken(data.access_token);
+        return true;
+      } catch {
+        return false;
+      } finally {
+        refreshInFlight = null;
+      }
+    })();
+  }
+  return refreshInFlight;
+}
+
+async function rawFetch(path: string, init: RequestInit): Promise<Response> {
   const token = getToken();
   const headers: Record<string, string> = {
     ...(init.headers as Record<string, string> | undefined),
@@ -85,8 +119,26 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
+  // credentials:"include" is required for the httpOnly refresh cookie to be
+  // sent/received, including when the frontend is deployed cross-origin
+  // (VITE_API_BASE_URL) — CORS already allows this (allow_credentials=True
+  // with an explicit origin allowlist, never "*").
+  return fetch(API_BASE_URL + path, { ...init, headers, credentials: "include" });
+}
 
-  const response = await fetch(API_BASE_URL + path, { ...init, headers });
+async function request<T>(path: string, init: RequestInit = {}, isRetry = false): Promise<T> {
+  const response = await rawFetch(path, init);
+
+  if (
+    response.status === 401 &&
+    !isRetry &&
+    !NO_REFRESH_RETRY_SUFFIXES.some((suffix) => path.endsWith(suffix))
+  ) {
+    const refreshed = await attemptRefresh();
+    if (refreshed) {
+      return request<T>(path, init, true);
+    }
+  }
 
   if (response.status === 401) {
     clearToken();
@@ -130,6 +182,21 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
+    });
+  },
+  logout(): Promise<void> {
+    return request<void>("/api/v1/auth/logout", { method: "POST" });
+  },
+  requestPasswordReset(email: string): Promise<void> {
+    return request<void>("/api/v1/auth/password-reset/request", {
+      method: "POST",
+      ...jsonBody({ email }),
+    });
+  },
+  confirmPasswordReset(token: string, newPassword: string): Promise<void> {
+    return request<void>("/api/v1/auth/password-reset/confirm", {
+      method: "POST",
+      ...jsonBody({ token, new_password: newPassword }),
     });
   },
   me(): Promise<User> {

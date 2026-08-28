@@ -7,6 +7,8 @@ from app.models.knowledge_document import KnowledgeDocument
 from app.models.membership import Membership
 from app.models.message import Message
 from app.models.organization import Organization
+from app.models.password_reset_token import PasswordResetToken
+from app.models.refresh_token import RefreshToken
 from app.models.user import User
 from app.models.widget_config import WidgetConfig
 from app.models.widget_session import WidgetSession
@@ -21,6 +23,8 @@ __all__ = [
     "Membership",
     "Message",
     "Organization",
+    "PasswordResetToken",
+    "RefreshToken",
     "User",
     "WidgetConfig",
     "WidgetSession",

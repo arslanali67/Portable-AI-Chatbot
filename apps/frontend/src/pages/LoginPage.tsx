@@ -57,6 +57,9 @@ export default function LoginPage() {
         <p className="muted">
           No account? <Link to="/register">Create one</Link>
         </p>
+        <p className="muted">
+          <Link to="/forgot-password">Forgot password?</Link>
+        </p>
       </form>
     </div>
   );

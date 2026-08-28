@@ -169,6 +169,7 @@ GET  /api/v1/organizations    -> list orgs current user belongs to
 - Config from settings/env: `secret_key`, `algorithm`, `access_token_expire_minutes`.
 - `create_access_token()` / `decode_access_token()` in `core/security.py`.
 - **JWT is not authorization.** `get_current_user()` always loads the user from the database and verifies existence + `is_active`.
+- Refresh tokens: DB-tracked (refresh_tokens table), single-use with rotation on every use, delivered via an httpOnly cookie (never localStorage — the whole point is keeping it out of XSS's reach). Theft is detected via reuse of an already-rotated token, which revokes the entire token family (family_id) and forces re-login.
 
 ### Password Hashing
 
@@ -1030,7 +1031,7 @@ Foundation implemented (`app/ai/`, `app/rag/`, SSE streaming, public widget). Fu
 
 ## 28. Explicitly Out of Scope
 
-OAuth, Google/GitHub login, password reset, email verification, MFA, refresh tokens, Redis usage, more real providers, credential management UI, LangChain, LlamaIndex, agents, integrations, billing.
+OAuth, Google/GitHub login, email verification, MFA, Redis usage, more real providers, credential management UI, LangChain, LlamaIndex, agents, integrations, billing. (Password reset and refresh tokens shipped — see 'Refresh Token Rotation & Password Reset' below.)
 
 ## 29. Production Hardening
 
@@ -1079,7 +1080,22 @@ OAuth, Google/GitHub login, password reset, email verification, MFA, refresh tok
 - Generic 401 on all auth failures — no user enumeration.
 - `get_current_user` always reloads the user from DB and checks `is_active` — JWT alone grants nothing.
 - Password hashing via bcrypt (direct); min length 8 enforced at schema.
-- No refresh tokens (documented out of scope).
+
+### Refresh Token Rotation & Password Reset
+
+```text
+POST /api/v1/auth/refresh                    (cookie in, cookie+access token out)
+POST /api/v1/auth/logout                     (revokes current refresh-token family)
+POST /api/v1/auth/password-reset/request      {"email": str}
+POST /api/v1/auth/password-reset/confirm      {"token": str, "new_password": str}
+```
+
+- `refresh_tokens`: `id`, `user_id` (FK, CASCADE), `family_id` (indexed), `token_hash` (SHA-256, unique — never stored plaintext, deliberately stricter than `widget_sessions.session_token`'s plaintext storage, since a refresh token grants full account access), `issued_at`, `expires_at`, `revoked_at` (nullable).
+- Rotation: every `/auth/refresh` call issues a new access token and a new refresh token, revokes the presented one, and the new row inherits the same `family_id`. Presenting an already-revoked token is treated as theft — the entire family is revoked and the caller must re-authenticate.
+- Cookie: `HttpOnly; Secure; SameSite=None; Path=/api/v1/auth`. `SameSite=None` specifically because the frontend supports a cross-origin deployment topology (`VITE_API_BASE_URL` pointing at a separate backend service); `allow_credentials=True` is already set on `CORSMiddleware` with an explicit origin allowlist (never `"*"`), which is what makes a credentialed cross-origin cookie legal here.
+- Widget sessions (`widget_sessions.session_token`) are a completely separate mechanism — passed explicitly in request bodies, never a cookie — and are unaffected by this change.
+- `password_reset_tokens`: `id`, `user_id` (FK, CASCADE), `token_hash` (SHA-256, unique), `expires_at` (1 hour), `used_at` (nullable), `created_at`. `/password-reset/request` always returns the same generic response regardless of whether the email exists (matches the existing login enumeration-safety pattern). A successful `/password-reset/confirm` also revokes all of that user's `refresh_tokens` families.
+- Email delivery is currently a log-only dev stub: the reset URL (with the raw, unhashed token) is written to the structured logger at INFO level instead of being emailed. This is a deliberate, temporary exception to the "never log bearer credentials" logging policy above, and must not be treated as production-ready — real delivery via a transactional provider is a follow-up milestone pending a provider choice.
 
 ### Authorization Audit (Step 17)
 

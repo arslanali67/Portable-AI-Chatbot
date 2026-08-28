@@ -95,6 +95,9 @@ describe("RequireAuth", () => {
 
     await screen.findByText("Login page");
     expect(screen.queryByText("Protected content")).not.toBeInTheDocument();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    // A 401 during hydration now attempts one silent refresh before giving
+    // up (M6): the original /auth/me call, plus the refresh attempt, which
+    // also fails here (no valid refresh cookie in this mocked environment).
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 });

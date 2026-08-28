@@ -15,7 +15,7 @@ interface AuthContextValue {
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, fullName: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -64,7 +64,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [login],
   );
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    try {
+      await api.logout();
+    } catch {
+      // Best-effort — the user's intent (be logged out) is honored locally
+      // regardless of whether the server call succeeds.
+    }
     clearToken();
     setUser(null);
   }, []);
