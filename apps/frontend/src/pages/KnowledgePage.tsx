@@ -51,6 +51,11 @@ export default function KnowledgePage() {
       load();
     } catch (err) {
       setError(errorMessage(err));
+      // A failed ingestion still persists a "failed" document server-side
+      // (KnowledgeService._run_pipeline commits status="failed" before
+      // re-raising) — reload so it appears in the table instead of staying
+      // invisible until an unrelated action refreshes the list.
+      load();
     } finally {
       setSaving(false);
     }
@@ -67,6 +72,7 @@ export default function KnowledgePage() {
       load();
     } catch (err) {
       setError(errorMessage(err));
+      load();
     } finally {
       setSaving(false);
     }
@@ -87,6 +93,7 @@ export default function KnowledgePage() {
       load();
     } catch (err) {
       setError(errorMessage(err));
+      load();
     } finally {
       setSaving(false);
     }

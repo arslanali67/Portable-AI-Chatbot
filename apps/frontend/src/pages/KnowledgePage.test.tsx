@@ -34,6 +34,17 @@ const DOC_B = {
   created_at: "2026-08-02T10:00:00Z",
 };
 
+const DOC_FAILED = {
+  id: 23,
+  name: "Broken Doc",
+  source_type: "text",
+  status: "failed",
+  chunk_count: 0,
+  original_filename: null,
+  source_uri: null,
+  created_at: "2026-08-03T10:00:00Z",
+};
+
 function listResponse(items: unknown[]) {
   return jsonResponse(200, { items, total: items.length });
 }
@@ -125,6 +136,16 @@ describe("KnowledgePage", () => {
     expect(within(row as HTMLElement).getByText("1")).toBeInTheDocument();
   });
 
+  it("renders a distinct badge for a failed document", async () => {
+    route({ get: listResponse([DOC_FAILED]) });
+
+    renderPage();
+
+    const row = await screen.findByText("Broken Doc").then((el) => el.closest("tr") as HTMLElement);
+    const badge = within(row).getByText("failed");
+    expect(badge.className).toContain("badge-failed");
+  });
+
   it("shows the empty state when no documents exist", async () => {
     route();
 
@@ -164,6 +185,25 @@ describe("KnowledgePage", () => {
     expect(String(postCall?.[1]?.body)).toContain('"content":"hello world"');
     expect(String(postCall?.[1]?.body)).toContain('"source_type":"text"');
     // The list was refreshed after successful ingestion.
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(getCallsBefore + 1);
+  });
+
+  it("reloads the document list after a failed ingestion, not just a successful one", async () => {
+    route({ get: listResponse([]), postText: jsonResponse(422, { detail: "ingestion failed" }) });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText(/No documents yet/);
+    const getCallsBefore = fetchMock.mock.calls.length;
+
+    await user.type(screen.getByPlaceholderText("Document name"), "Notes");
+    await user.type(screen.getByPlaceholderText("Paste content to index…"), "hello world");
+    await user.click(screen.getByRole("button", { name: "Ingest text" }));
+
+    await screen.findByText("ingestion failed");
+    // The list was refreshed even though ingestion failed, so a document
+    // that was persisted as "failed" server-side would appear without
+    // requiring a manual reload.
     expect(fetchMock.mock.calls.length).toBeGreaterThan(getCallsBefore + 1);
   });
 
