@@ -32,15 +32,15 @@ class RetrievalService:
         query_vector = (await provider.embed_texts([query]))[0]
 
         rows = await self.chunks.search(
-            organization_id, chatbot_id, query_vector, top_k
+            organization_id, chatbot_id, query, query_vector, top_k
         )
         return [
             RetrievedChunkResponse(
                 document_id=chunk.document_id,
                 chunk_id=chunk.id,
                 content=chunk.content,
-                score=distance,
+                score=score,
                 metadata=chunk.metadata_json,
             )
-            for chunk, distance in rows
+            for chunk, score in rows
         ]

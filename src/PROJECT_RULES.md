@@ -97,6 +97,7 @@ In scope:
 - Real provider integration: OpenAI-compatible HTTP adapter (credentials from env, mocked in tests); fake providers stay default for offline tests
 - Provider & model management: discovery APIs over the registries; safe DTOs, no credential exposure, chatbot provider/model validation; platform-admin-gated enable/disable mutation via a thin DB override table (registries remain the sole source of executable adapter definitions, capabilities, and credentials — the DB never stores them)
 - RAG/knowledge foundation: text ingestion → normalize → chunk → embeddings → pgvector storage → tenant-scoped retrieval
+- Hybrid search: `RetrievalService`/`ChunkRepository` combine pgvector cosine similarity with Postgres full-text search (`tsvector`/GIN) via Reciprocal Rank Fusion (RRF); no new external dependency, `search()`'s signature unchanged, composes transparently with per-chatbot `rag_enabled`/`rag_top_k`.
 - RAG runtime integration: ChatRuntime retrieves knowledge via RetrievalService and assembles context via ContextBuilder (above AIGateway); system prompt authoritative. Per-chatbot RAG config (`chatbots.rag_enabled`, `chatbots.rag_top_k`) lets each chatbot enable/disable retrieval and override `top_k`; `rag_enabled=false` skips RetrievalService entirely (not called-and-discarded), and `rag_top_k=NULL` falls back to the global `settings.rag_top_k` default, which remains the platform default.
 - Real embeddings (OpenAI-compatible, mocked in tests) + file ingestion (txt/md/pdf/docx) with deduplication; fake embeddings stay default for offline tests
 - URL/web ingestion: SSRF-safe fetch (DNS/IP checks, validated redirects), HTML extraction, reuses shared pipeline; public pages only, robots.txt respected
@@ -110,7 +111,7 @@ Explicitly out of scope (do not implement yet):
 - OAuth (Google/GitHub login), email verification, MFA (password reset and refresh tokens are now in scope — see the session-hardening bullet above; real transactional email delivery for password reset remains a follow-up pending a provider choice)
 - More real providers (Anthropic, Kimi, DeepSeek, etc.), credential management, BYOK, credential management UI (credentials remain environment/platform controlled)
 - WebSocket transport, idempotency keys, retries/fallback/circuit breaker
-- Reranking, hybrid search, semantic cache, document versioning, recursive crawling/sitemaps/JS rendering/OCR, background workers
+- Reranking (deferred separately — needs an explicit decision between local model inference and an external rerank API/service before implementation), semantic cache, document versioning, recursive crawling/sitemaps/JS rendering/OCR, background workers
 - Widget customization UI beyond the current public config (themes/languages per-install), public widget analytics
 - API keys in DB, full DB-backed provider/model CRUD (registries remain the code-owned source of truth for adapter definitions, capabilities, and credentials — only an admin-controlled enable/disable override is DB-backed)
 - Redis usage (rate limiter is in-memory MVP; Redis-backed backend is a documented seam)

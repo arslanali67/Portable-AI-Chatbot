@@ -213,6 +213,92 @@ def test_unknown_chatbot_404() -> None:
     assert _search(token, org_id, 999_999, "x").status_code == 404
 
 
+# --- Hybrid search (vector + full-text via RRF) ---
+
+
+def test_hybrid_search_combines_vector_and_fulltext_signals() -> None:
+    """Proves fusion genuinely combines both signals rather than falling
+    back to one.
+
+    Query "quarterly archive" against four chunks:
+    - V: contains "archive" verbatim (strong fake-embedding vector match)
+      but no "quarter" stem anywhere -> fails the full-text AND-match
+      entirely (verified live: `to_tsvector(...) @@ plainto_tsquery(...)`
+      is false for this content), so V can ONLY ever surface via the
+      vector signal.
+    - F: contains "quarter" + "archiving" (stems to 'quarter' & 'archiv',
+      matching both required terms) but shares zero literal tokens with
+      the query, so its fake-embedding vector similarity is exactly 0
+      (verified via the fake embedding's hash-based bag-of-words scheme)
+      -> F can ONLY ever surface via the full-text signal.
+    - D1/D2: share nothing with the query on either signal (distractors).
+
+    If fusion silently ignored the vector signal, V (which never appears
+    in the full-text candidate list) could never be returned at all. If
+    fusion silently ignored full-text, F would rank no better than the
+    distractors (all tied at zero vector similarity). The fused top-2
+    result being exactly [F, V] is only possible if both signals are
+    genuinely contributing.
+    """
+    token, org_id, bot_id = _setup()
+    _ingest(token, org_id, bot_id, content="The archive stores old server logs and nightly backup snapshots.", name="V")
+    _ingest(token, org_id, bot_id, content="Every quarter the finance team is archiving compliance records.", name="F")
+    _ingest(token, org_id, bot_id, content="Weather forecasts predict light rain across the valley this weekend.", name="D1")
+    _ingest(token, org_id, bot_id, content="The championship game ended with a dramatic overtime victory.", name="D2")
+
+    r = _search(token, org_id, bot_id, "quarterly archive", top_k=2)
+    assert r.status_code == 200
+    results = r.json()["results"]
+    assert len(results) == 2
+    contents = {row["content"] for row in results}
+    assert contents == {
+        "Every quarter the finance team is archiving compliance records.",
+        "The archive stores old server logs and nightly backup snapshots.",
+    }
+
+
+def test_hybrid_search_top_k_respected_after_fusion() -> None:
+    """More matching chunks exist than top_k; the final count is still
+    exactly top_k after fusion, not the size of either candidate list."""
+    token, org_id, bot_id = _setup()
+    for i in range(5):
+        _ingest(
+            token,
+            org_id,
+            bot_id,
+            content=f"Archive record number {i} about quarterly financial statements.",
+            name=f"Doc{i}",
+        )
+    r = _search(token, org_id, bot_id, "quarterly archive", top_k=2)
+    assert r.status_code == 200
+    assert len(r.json()["results"]) == 2
+
+
+def test_hybrid_search_tenant_isolation_enforced_on_both_signals() -> None:
+    """A chunk that would rank well on full-text (not vector — shares no
+    literal tokens with the query) must never leak across organizations
+    or chatbots. Both candidate queries in the fusion are independently
+    scoped, not just the vector one."""
+    token_a, org_a, bot_a = _setup()
+    token_b, org_b, bot_b = _setup()
+    fts_relevant = "Every quarter the finance team is archiving compliance records."
+    _ingest(token_b, org_b, bot_b, content=fts_relevant)
+    r = _search(token_a, org_a, bot_a, "quarterly archive")
+    assert r.status_code == 200
+    assert r.json()["results"] == []
+
+    # Same organization, different chatbot.
+    r2 = client.post(
+        f"/api/v1/organizations/{org_a}/chatbots",
+        json={"name": "Bot2", "slug": _slug(f"bot2{uuid.uuid4().hex[:6]}")},
+        headers=_auth(token_a),
+    )
+    bot_a2 = r2.json()["id"]
+    _ingest(token_a, org_a, bot_a2, content=fts_relevant)
+    r3 = _search(token_a, org_a, bot_a, "quarterly archive")
+    assert r3.json()["results"] == []
+
+
 def test_cross_org_document_access_denied() -> None:
     token_a, org_a, bot_a = _setup()
     token_b, org_b, bot_b = _setup()

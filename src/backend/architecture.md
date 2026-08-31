@@ -668,9 +668,10 @@ Document → Normalize → Chunk → Embed → Store → ready
 
 ### Similarity Search
 
-- `RetrievalService`: query text → query embedding → tenant-scoped pgvector cosine search → top-k chunks.
-- Required scope: `WHERE organization_id = X AND chatbot_id = Y`. Never global vector search.
-- Returns `RetrievedChunk` DTOs (document_id, chunk_id, content, score, metadata) — never ORM objects or raw vectors.
+- `RetrievalService`: query text → query embedding → tenant-scoped hybrid search (pgvector cosine similarity + Postgres full-text search) → top-k chunks.
+- Hybrid ranking: `ChunkRepository` runs two candidate queries per search — cosine-distance `ORDER BY` on `document_chunks.vector` (existing HNSW index) and `ts_rank_cd` `ORDER BY` on a new `content_tsv` generated column (new GIN index), each `LIMIT candidate_pool` (`candidate_pool = top_k * 4`) — fused via Reciprocal Rank Fusion (RRF, `score = Σ 1/(k + rank_i)` across whichever list(s) a chunk appears in, k=60): no cross-scale score tuning, standard technique, no new runtime dependency.
+- Required scope: `WHERE organization_id = X AND chatbot_id = Y` on both candidate queries. Never global vector search.
+- Returns `RetrievedChunk` DTOs (document_id, chunk_id, content, score, metadata) — never ORM objects or raw vectors. `search(organization_id, chatbot_id, query, top_k)` is unchanged — fusion is entirely internal, so `ContextBuilder` and per-chatbot `rag_enabled`/`rag_top_k` (§17) compose transparently, unaffected.
 
 ### Tenant & Chatbot Isolation
 
@@ -686,7 +687,7 @@ Document → Normalize → Chunk → Embed → Store → ready
 User Message → Retrieval → Context Builder → AIGateway → Assistant
 ```
 
-Implemented (see §17). `RetrievalService` + `ContextBuilder` are wired into both normal and streaming chat. Future: hybrid BM25+vector search, reranking, semantic cache, document versioning, background workers.
+Implemented (see §17). `RetrievalService` + `ContextBuilder` are wired into both normal and streaming chat. Future: reranking, semantic cache, document versioning, background workers.
 
 ## 17. RAG Runtime Integration / Context Assembly
 
@@ -755,7 +756,7 @@ chunk content
 
 ### Future
 
-- Reranking, hybrid search, streaming, per-chatbot RAG config (enable/disable, top_k), token budgeting.
+- Reranking, streaming, per-chatbot RAG config (enable/disable, top_k), token budgeting.
 
 ## 18. Real Embeddings & File Ingestion
 
@@ -1026,7 +1027,7 @@ CI therefore enforces the same verification commands developers run locally; it 
 
 ## 26. Out of Scope (current milestone)
 
-WebSocket transport, widget per-install customization beyond the current public config, recursive crawling/sitemaps/JS rendering/OCR, background workers, reranking, hybrid BM25+vector search, semantic cache, document versioning, automatic re-indexing, more embedding providers, billing, analytics, agents, MCP, idempotency keys, usage persistence, retries/fallback/circuit breaker, provider/model DB tables, provider enable/disable mutation, platform-admin role.
+WebSocket transport, widget per-install customization beyond the current public config, recursive crawling/sitemaps/JS rendering/OCR, background workers, reranking, semantic cache, document versioning, automatic re-indexing, more embedding providers, billing, analytics, agents, MCP, idempotency keys, usage persistence, retries/fallback/circuit breaker, provider/model DB tables, provider enable/disable mutation, platform-admin role.
 
 ## 27. Future AI Gateway Extensions
 
