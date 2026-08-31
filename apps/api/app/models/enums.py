@@ -20,6 +20,11 @@ class ChatbotVisibility(str, enum.Enum):
     PUBLIC = "public"
 
 
+class WidgetPosition(str, enum.Enum):
+    BOTTOM_RIGHT = "bottom_right"
+    BOTTOM_LEFT = "bottom_left"
+
+
 class ConversationStatus(str, enum.Enum):
     ACTIVE = "active"
     ARCHIVED = "archived"

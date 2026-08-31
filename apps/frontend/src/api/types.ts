@@ -205,11 +205,22 @@ export interface MessageList {
   offset: number;
 }
 
+export type WidgetPosition = "bottom_right" | "bottom_left";
+
 export interface WidgetConfig {
   public_key: string;
   enabled: boolean;
   revoked_at: string | null;
   allowed_origins: string[];
+  theme_color: string | null;
+  widget_position: WidgetPosition | null;
+  avatar_url: string | null;
+}
+
+export interface WidgetConfigUpdate {
+  allowed_origins?: string[];
+  theme_color?: string | null;
+  widget_position?: WidgetPosition | null;
 }
 
 export interface ApiError {

@@ -103,6 +103,7 @@ In scope:
 - URL/web ingestion: SSRF-safe fetch (DNS/IP checks, validated redirects), HTML extraction, reuses shared pipeline; public pages only, robots.txt respected
 - Streaming chat (SSE): normalized AIStreamEvent contract, provider-agnostic AIGateway.stream, fake + OpenAI providers stream, one persisted assistant message
 - Public embeddable widget: public_key identity, anonymous sessions, origin control, rate limiting, widget.js package, reuses existing runtime/RAG/SSE
+- Widget customization: per-widget theme (`theme_color`, `widget_position`, `avatar_url` on `widget_configs`, NULL = current built-in default; avatar is an uploaded image served from local disk, not a freeform admin-entered URL) and functional per-chatbot widget language (existing `chatbot.language`, now actually consumed by `widget.js` instead of fetched-and-ignored, including RTL layout for `ur`); new lightweight public config endpoint and `WidgetConfig` update path; no change to `widget_sessions`, authentication, or the existing public-response allowlist discipline
 - Production hardening: environment detection + fail-fast config validation, CORS/trusted hosts from env, centralized safe error handling, request body limits, readiness check separate from liveness, structured logging (no secrets), rate-limiter backend abstraction (in-memory MVP, Redis seam), auth/JWT review, authorization audit
 - Frontend admin dashboard (`apps/frontend`, React + TypeScript + Vite): auth (login/register/logout), organization dashboard, chatbot management, knowledge management, chat test console (SSE streaming), widget configuration + embed snippet + live preview, provider/model read-only visibility
 - Deployment: backend + frontend Dockerfiles, production docker-compose (PostgreSQL + API + frontend reverse proxy), environment documentation, `.env.example` with safe placeholders
@@ -112,7 +113,7 @@ Explicitly out of scope (do not implement yet):
 - More real providers (Anthropic, Kimi, DeepSeek, etc.), credential management, BYOK, credential management UI (credentials remain environment/platform controlled)
 - WebSocket transport, idempotency keys, retries/fallback/circuit breaker
 - Reranking (deferred separately — needs an explicit decision between local model inference and an external rerank API/service before implementation), semantic cache, document versioning, recursive crawling/sitemaps/JS rendering/OCR, background workers
-- Widget customization UI beyond the current public config (themes/languages per-install), public widget analytics
+- Public widget analytics
 - API keys in DB, full DB-backed provider/model CRUD (registries remain the code-owned source of truth for adapter definitions, capabilities, and credentials — only an admin-controlled enable/disable override is DB-backed)
 - Redis usage (rate limiter is in-memory MVP; Redis-backed backend is a documented seam)
 - LangChain, LlamaIndex

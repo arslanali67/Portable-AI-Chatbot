@@ -6,13 +6,13 @@ client never supplies them.
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.rate_limit import widget_ip_rate_limiter, widget_rate_limiter
-from app.models import Conversation, WidgetConfig, WidgetSession
+from app.models import Chatbot, Conversation, WidgetConfig, WidgetSession
 from app.schemas.public_widget import (
     WidgetChatRequest,
     WidgetConfigResponse,
@@ -38,6 +38,44 @@ def _widget_error(exc: WidgetError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def _build_config_response(chatbot: Chatbot, config: WidgetConfig) -> WidgetConfigResponse:
+    """The entire public-response safety boundary: explicit field allowlist,
+    never a raw model dump. Never system_prompt, provider_id, model_id,
+    organization_id, DB ids, credentials."""
+    return WidgetConfigResponse(
+        chatbot_name=chatbot.name,
+        welcome_message=chatbot.welcome_message,
+        language=chatbot.language,
+        enabled=True,
+        theme_color=config.theme_color,
+        widget_position=config.widget_position.value if config.widget_position else None,
+        avatar_url=config.avatar_url,
+    )
+
+
+@router.get("/config", response_model=WidgetConfigResponse)
+async def get_public_config(
+    request: Request,
+    public_key: str = Query(min_length=1, max_length=128),
+    db: AsyncSession = Depends(get_db),
+):
+    """Theme/language-only, public_key-derived lookup — no session created,
+    no DB write. Fetched eagerly at widget.js script load so the
+    always-visible launcher can render themed before the visitor ever
+    interacts; the existing lazy session-creation flow below is unchanged."""
+    if not widget_ip_rate_limiter.allow(f"ip:{_client_ip(request)}"):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded")
+    try:
+        config, chatbot = await PublicWidgetService(db).get_public_config(public_key)
+    except PublicChatbotUnavailableError as exc:
+        raise _widget_error(exc)
+    return _build_config_response(chatbot, config)
+
+
 @router.post("/session", response_model=WidgetSessionResponse)
 async def create_session(
     payload: WidgetSessionRequest,
@@ -56,12 +94,7 @@ async def create_session(
 
     return WidgetSessionResponse(
         session_token=session.session_token,
-        config=WidgetConfigResponse(
-            chatbot_name=chatbot.name,
-            welcome_message=chatbot.welcome_message,
-            language=chatbot.language,
-            enabled=True,
-        ),
+        config=_build_config_response(chatbot, config),
     )
 
 

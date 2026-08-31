@@ -94,6 +94,13 @@ class Settings(BaseSettings):
     widget_rate_limit_window_seconds: int = 3600
     widget_placeholder_user_name: str = "Widget Visitor"
 
+    # Widget avatar upload — local disk, no external storage dependency.
+    widget_avatar_upload_dir: str = "storage/widget_avatars"
+    # Deliberately below max_request_bytes (the global body-size cap): this
+    # keeps the endpoint's own ImageTooLargeError reachable and independently
+    # testable rather than always being shadowed by the outer middleware.
+    widget_avatar_max_bytes: int = 900_000
+
     @field_validator("environment")
     @classmethod
     def environment_valid(cls, value: str) -> str:

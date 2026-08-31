@@ -461,3 +461,116 @@ def test_widget_js_served() -> None:
     r = client.get("/widget.js")
     assert r.status_code == 200
     assert "portableAI" in r.text or "portableai" in r.text
+
+
+# --- Public config (eager, session-less launcher theming) ---
+
+
+def test_public_config_valid_key_returns_exact_allowlist() -> None:
+    _, _, _, key = _setup_public_bot()
+    r = client.get("/api/v1/public/widget/config", params={"public_key": key})
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body.keys()) == {
+        "chatbot_name",
+        "welcome_message",
+        "language",
+        "enabled",
+        "theme_color",
+        "widget_position",
+        "avatar_url",
+    }
+    assert body["chatbot_name"] == "Public Bot"
+    assert body["welcome_message"] == "Hi there"
+    assert body["enabled"] is True
+    assert body["theme_color"] is None
+    assert body["widget_position"] is None
+    assert body["avatar_url"] is None
+    # No secret/system prompt/provider leakage — same discipline as /session.
+    assert "system_prompt" not in r.text
+    assert "provider" not in r.text
+    assert "model_id" not in r.text
+    assert "organization_id" not in r.text
+
+
+def test_public_config_no_session_no_db_write() -> None:
+    """The eager config fetch must never create a widget_sessions row."""
+    _, _, bot_id, key = _setup_public_bot()
+
+    async def _session_count() -> int:
+        async with TestSessionLocal() as s:
+            r = await s.execute(
+                text("SELECT COUNT(*) FROM widget_sessions WHERE chatbot_id = :cid"),
+                {"cid": bot_id},
+            )
+            return r.scalar_one()
+
+    import asyncio
+
+    before = asyncio.run(_session_count())
+    r = client.get("/api/v1/public/widget/config", params={"public_key": key})
+    assert r.status_code == 200
+    after = asyncio.run(_session_count())
+    assert after == before
+
+
+def test_public_config_invalid_key_404() -> None:
+    r = client.get("/api/v1/public/widget/config", params={"public_key": "nope"})
+    assert r.status_code == 404
+
+
+def test_public_config_revoked_404() -> None:
+    token, org_id, bot_id, key = _setup_public_bot()
+    r = client.delete(
+        f"/api/v1/organizations/{org_id}/chatbots/{bot_id}/widget-config",
+        headers=_auth(token),
+    )
+    assert r.status_code == 204
+    r = client.get("/api/v1/public/widget/config", params={"public_key": key})
+    assert r.status_code == 404
+
+
+def test_public_config_disabled_404() -> None:
+    _, _, bot_id, key = _setup_public_bot()
+
+    async def _disable() -> None:
+        async with TestSessionLocal() as s:
+            await s.execute(
+                text("UPDATE widget_configs SET enabled = false WHERE chatbot_id = :cid"),
+                {"cid": bot_id},
+            )
+            await s.commit()
+
+    import asyncio
+
+    asyncio.run(_disable())
+    r = client.get("/api/v1/public/widget/config", params={"public_key": key})
+    assert r.status_code == 404
+
+
+def test_public_config_rate_limited() -> None:
+    from app.core.rate_limit import widget_ip_rate_limiter
+
+    _, _, _, key = _setup_public_bot()
+    # Exhaust the per-IP limiter used by this endpoint (TestClient's requests
+    # all share the same synthetic client IP).
+    for _ in range(1000):
+        widget_ip_rate_limiter.allow("ip:testclient")
+    r = client.get("/api/v1/public/widget/config", params={"public_key": key})
+    assert r.status_code == 429
+
+
+def test_session_response_includes_theme_fields_additively() -> None:
+    """Regression: the existing session endpoint's response shape gained new
+    additive fields (all null for a bare config) without breaking the
+    pre-existing fields' values."""
+    _, _, _, key = _setup_public_bot()
+    r = _session(key)
+    assert r.status_code == 200
+    config = r.json()["config"]
+    assert config["chatbot_name"] == "Public Bot"
+    assert config["welcome_message"] == "Hi there"
+    assert config["enabled"] is True
+    assert config["theme_color"] is None
+    assert config["widget_position"] is None
+    assert config["avatar_url"] is None

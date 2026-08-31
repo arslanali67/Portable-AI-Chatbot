@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse
@@ -13,6 +13,7 @@ from app.core.middleware import (
     ErrorHandlingMiddleware,
     RequestLoggingMiddleware,
 )
+from app.services.widget_avatar import safe_avatar_path
 
 setup_logging()
 
@@ -41,6 +42,14 @@ app.include_router(api_router, prefix=settings.api_v1_prefix)
 @app.get("/widget.js", include_in_schema=False)
 def widget_js() -> FileResponse:
     return FileResponse(_widget_script_path(), media_type="application/javascript")
+
+
+@app.get("/widget-avatars/{filename}", include_in_schema=False)
+def widget_avatar(filename: str) -> FileResponse:
+    path = safe_avatar_path(filename)
+    if path is None or not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    return FileResponse(path)
 
 
 def _widget_script_path() -> Path:

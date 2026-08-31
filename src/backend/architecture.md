@@ -897,7 +897,7 @@ Website → widget.js → Public Widget API → Widget Session → existing Chat
 ### Public Identity (public_key)
 
 - Dedicated cryptographically-random, non-sequential `public_key` per chatbot (not derived from DB ids). Safe to expose publicly; rotatable/revocable via `revoked_at`.
-- Stored in `widget_configs` table: `id`, `chatbot_id`, `public_key` (unique), `enabled`, `allowed_origins` (JSON list), timestamps, `revoked_at`.
+- Stored in `widget_configs` table: `id`, `chatbot_id`, `public_key` (unique), `enabled`, `allowed_origins` (JSON list), `theme_color`/`widget_position`/`avatar_url` (all nullable — NULL means widget.js's built-in default, no backfill), timestamps, `revoked_at`.
 - Never contains provider credentials, JWT secret, or DB credentials.
 
 ### Anonymous Visitor Session
@@ -914,8 +914,9 @@ Website → widget.js → Public Widget API → Widget Session → existing Chat
 ### Public API
 
 - `POST /api/v1/public/widget/session` — `{public_key, origin}` → creates/returns session token + safe config.
+- `GET /api/v1/public/widget/config` — `{public_key}` → theme/language only, no session created, no DB write; lets the always-visible launcher theme itself before the visitor ever interacts. Rate-limited via the same `widget_ip_rate_limiter` machinery as the chat endpoints.
 - `POST /api/v1/public/widget/chat/stream` — `{session_token, content, origin}` → SSE stream reusing Step 15 runtime.
-- Config response: `chatbot_name`, `welcome_message`, `language`, `enabled` only. **Never** system_prompt, provider_id, model_id, organization_id, DB ids, credentials.
+- Config response: `chatbot_name`, `welcome_message`, `language`, `enabled`, `theme_color`, `widget_position`, `avatar_url` only. **Never** system_prompt, provider_id, model_id, organization_id, DB ids, credentials.
 - Public availability: chatbot must be `active` + `public`. draft/archived/private → 404 (no enumeration).
 
 ### Origin Control & CORS
@@ -930,6 +931,14 @@ Website → widget.js → Public Widget API → Widget Session → existing Chat
 ### Widget Package
 
 - `packages/widget/` — vanilla JS (no build step): loader, floating launcher, chat panel, message rendering (plain text, **no innerHTML with untrusted content**), input, SSE handling, error state, session persistence via localStorage (non-sensitive session token only), duplicate-init guard, mobile-friendly CSS.
+
+### Widget Customization (Theme & Language)
+
+- `theme_color` (hex, `^#[0-9a-fA-F]{6}$`, 6-digit only), `widget_position` (`bottom_right`/`bottom_left` only), `avatar_url` live on `widget_configs`, nullable, NULL = widget.js's current built-in defaults (hardcoded blue, bottom-right, no avatar). One theme per chatbot — `WidgetConfig` stays effectively 1:1 with `Chatbot`, as it is today; no multiple themed embeds per chatbot.
+- Avatar is an **uploaded image**, not a freeform admin-entered URL: `POST /api/v1/organizations/{organization_id}/chatbots/{chatbot_id}/widget-config/avatar` (authenticated, organization-scoped, admin+), multipart file upload. Validated by actual file content (magic bytes), not extension or client-supplied `Content-Type` — PNG/JPEG/WebP only, max ~1MB. Stored on local disk under a dedicated, gitignored, configurable upload directory; filename is a generated UUID + validated extension, never the client's original filename. Served via a static route that validates the requested path stays within the upload directory (no traversal). Re-uploading replaces the previous file (old file deleted, not orphaned) and updates `avatar_url` to the new served path. Rendered client-side only (`<img src="...">` in the visitor's browser) — the backend never re-fetches it, so there is no SSRF surface.
+- `language` reuses the existing `chatbots.language` field (already the widget response's only consumer); `widget.js` gains a small built-in `en`/`ur` string table for its own chrome text, selected by the returned `language`, falling back to `en`. `ur` additionally sets `dir="rtl"` on the chat panel — a real layout change, not just translated strings.
+- `GET /api/v1/public/widget/config` is fetched eagerly at script load (no session, no DB write) so the always-visible launcher renders themed from the start; the existing lazy session-creation flow on first message is unchanged.
+- `WidgetConfigService.update()` + `PATCH .../widget-config` (admin, organization-scoped) is new — no update path existed before this milestone.
 
 ### XSS Protection
 

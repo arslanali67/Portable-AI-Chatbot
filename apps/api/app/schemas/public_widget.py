@@ -15,6 +15,9 @@ class WidgetConfigResponse(BaseModel):
     welcome_message: str
     language: str
     enabled: bool
+    theme_color: str | None = None
+    widget_position: str | None = None
+    avatar_url: str | None = None
 
 
 class WidgetSessionResponse(BaseModel):

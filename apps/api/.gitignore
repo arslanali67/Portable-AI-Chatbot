@@ -24,3 +24,6 @@ htmlcov/
 
 # Alembic
 apps/api/alembic/versions/*.pyc
+
+# Widget avatar uploads (local-disk storage, not committed)
+storage/

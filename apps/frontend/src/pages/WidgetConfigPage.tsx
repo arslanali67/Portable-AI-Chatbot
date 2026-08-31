@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 
 import { api, API_BASE_URL } from "../api/client";
 import { errorMessage } from "../auth/AuthContext";
-import type { WidgetConfig } from "../api/types";
+import type { WidgetConfig, WidgetPosition } from "../api/types";
+
+const POSITION_OPTIONS: WidgetPosition[] = ["bottom_right", "bottom_left"];
 
 export default function WidgetConfigPage() {
   const { organizationId, chatbotId } = useParams<{
@@ -19,6 +21,18 @@ export default function WidgetConfigPage() {
   const [originsText, setOriginsText] = useState("");
   const [working, setWorking] = useState(false);
 
+  // Theme form state
+  const [themeColor, setThemeColor] = useState("");
+  const [widgetPosition, setWidgetPosition] = useState<WidgetPosition | "">("");
+  const [themeSaving, setThemeSaving] = useState(false);
+  const [themeError, setThemeError] = useState<string | null>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+
+  function syncThemeForm(cfg: WidgetConfig) {
+    setThemeColor(cfg.theme_color ?? "");
+    setWidgetPosition(cfg.widget_position ?? "");
+  }
+
   const load = useCallback(() => {
     setLoading(true);
     api
@@ -26,6 +40,7 @@ export default function WidgetConfigPage() {
       .then((cfg) => {
         setConfig(cfg);
         setOriginsText(cfg.allowed_origins.join("\n"));
+        syncThemeForm(cfg);
       })
       .catch((err) => {
         if ((err as { status?: number }).status === 404) {
@@ -49,16 +64,48 @@ export default function WidgetConfigPage() {
         .map((s) => s.trim())
         .filter(Boolean);
       const created = await api.createWidgetConfig(orgId, botId, origins);
-      setConfig({
-        public_key: created.public_key,
-        enabled: created.enabled,
-        revoked_at: null,
-        allowed_origins: origins,
-      });
+      setConfig(created);
+      syncThemeForm(created);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setWorking(false);
+    }
+  }
+
+  async function saveTheme(e: FormEvent) {
+    e.preventDefault();
+    setThemeSaving(true);
+    setThemeError(null);
+    try {
+      const updated = await api.updateWidgetConfig(orgId, botId, {
+        theme_color: themeColor.trim() === "" ? null : themeColor.trim(),
+        widget_position: widgetPosition === "" ? null : widgetPosition,
+      });
+      setConfig(updated);
+      syncThemeForm(updated);
+    } catch (err) {
+      setThemeError(errorMessage(err));
+    } finally {
+      setThemeSaving(false);
+    }
+  }
+
+  async function uploadAvatar(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) {
+      return;
+    }
+    setAvatarUploading(true);
+    setThemeError(null);
+    try {
+      const updated = await api.uploadWidgetAvatar(orgId, botId, file);
+      setConfig(updated);
+    } catch (err) {
+      setThemeError(errorMessage(err));
+    } finally {
+      setAvatarUploading(false);
     }
   }
 
@@ -125,6 +172,60 @@ export default function WidgetConfigPage() {
           Enabled: {config.enabled ? "yes" : "no"}
           {config.revoked_at ? ` · revoked ${new Date(config.revoked_at).toLocaleString()}` : ""}
         </p>
+      </div>
+
+      <div className="panel">
+        <h3>Theme &amp; branding</h3>
+        {themeError && <div className="error-box">{themeError}</div>}
+        <form onSubmit={saveTheme}>
+          <div className="form-grid">
+            <label>
+              Theme color
+              <input
+                type="text"
+                placeholder="#2563eb"
+                pattern="^#[0-9a-fA-F]{6}$"
+                value={themeColor}
+                onChange={(e) => setThemeColor(e.target.value)}
+              />
+            </label>
+            <label>
+              Position
+              <select
+                value={widgetPosition}
+                onChange={(e) => setWidgetPosition(e.target.value as WidgetPosition | "")}
+              >
+                <option value="">Default (bottom right)</option>
+                {POSITION_OPTIONS.map((p) => (
+                  <option key={p} value={p}>
+                    {p === "bottom_right" ? "Bottom right" : "Bottom left"}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <button type="submit" disabled={themeSaving}>
+            {themeSaving ? "Saving…" : "Save theme"}
+          </button>
+        </form>
+
+        <h3>Avatar</h3>
+        {config.avatar_url && (
+          <img
+            className="widget-avatar-preview"
+            src={`${widgetApiBase()}${config.avatar_url}`}
+            alt="Widget avatar"
+            width={48}
+            height={48}
+          />
+        )}
+        <input
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          onChange={uploadAvatar}
+          disabled={avatarUploading}
+        />
+        {avatarUploading && <p className="muted small">Uploading…</p>}
       </div>
 
       <div className="panel">

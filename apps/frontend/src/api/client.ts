@@ -23,6 +23,7 @@ import type {
   TokenResponse,
   User,
   WidgetConfig,
+  WidgetConfigUpdate,
 } from "./types";
 
 const TOKEN_KEY = "portableai_access_token";
@@ -295,10 +296,29 @@ export const api = {
     orgId: number,
     chatbotId: number,
     allowedOrigins: string[],
-  ): Promise<{ public_key: string; enabled: boolean }> {
-    return request<{ public_key: string; enabled: boolean }>(
+    theme?: WidgetConfigUpdate,
+  ): Promise<WidgetConfig> {
+    return request<WidgetConfig>(
       `/api/v1/organizations/${orgId}/chatbots/${chatbotId}/widget-config`,
-      { method: "POST", ...jsonBody({ allowed_origins: allowedOrigins }) },
+      { method: "POST", ...jsonBody({ allowed_origins: allowedOrigins, ...theme }) },
+    );
+  },
+  updateWidgetConfig(
+    orgId: number,
+    chatbotId: number,
+    data: WidgetConfigUpdate,
+  ): Promise<WidgetConfig> {
+    return request<WidgetConfig>(
+      `/api/v1/organizations/${orgId}/chatbots/${chatbotId}/widget-config`,
+      { method: "PATCH", ...jsonBody(data) },
+    );
+  },
+  uploadWidgetAvatar(orgId: number, chatbotId: number, file: File): Promise<WidgetConfig> {
+    const body = new FormData();
+    body.append("file", file);
+    return request<WidgetConfig>(
+      `/api/v1/organizations/${orgId}/chatbots/${chatbotId}/widget-config/avatar`,
+      { method: "POST", body },
     );
   },
   revokeWidgetConfig(orgId: number, chatbotId: number): Promise<void> {

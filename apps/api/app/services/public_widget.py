@@ -48,7 +48,7 @@ class PublicWidgetService:
         self.conversations = ConversationRepository(db_session)
         self.messages = MessageRepository(db_session)
 
-    async def create_session(self, public_key: str, origin: str | None) -> tuple[WidgetSession, WidgetConfig, Chatbot]:
+    async def _resolve_by_public_key(self, public_key: str) -> tuple[WidgetConfig, Chatbot]:
         config = await self.configs.get_by_public_key(public_key)
         if config is None or config.revoked_at is not None or not config.enabled:
             raise PublicChatbotUnavailableError(404, "Chatbot not found")
@@ -57,6 +57,15 @@ class PublicWidgetService:
         if chatbot is None or chatbot.status != ChatbotStatus.ACTIVE or chatbot.visibility != ChatbotVisibility.PUBLIC:
             raise PublicChatbotUnavailableError(404, "Chatbot not found")
 
+        return config, chatbot
+
+    async def get_public_config(self, public_key: str) -> tuple[WidgetConfig, Chatbot]:
+        """Theme/language-only lookup for the eager launcher-theming fetch.
+        No session created, no DB write — a pure read, unlike create_session."""
+        return await self._resolve_by_public_key(public_key)
+
+    async def create_session(self, public_key: str, origin: str | None) -> tuple[WidgetSession, WidgetConfig, Chatbot]:
+        config, chatbot = await self._resolve_by_public_key(public_key)
         self._check_origin(config, origin)
 
         session = await self.sessions.create(config.chatbot_id)

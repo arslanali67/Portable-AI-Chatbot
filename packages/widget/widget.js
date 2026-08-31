@@ -32,6 +32,24 @@
     sessionToken = null;
   }
 
+  var STRINGS = {
+    en: {
+      placeholder: "Type a message...",
+      send: "Send",
+      launcherClosed: "Chat",
+      launcherOpen: "×",
+      defaultGreeting: "Hello!",
+    },
+    ur: {
+      placeholder: "پیغام لکھیں...",
+      send: "بھیجیں",
+      launcherClosed: "چیٹ",
+      launcherOpen: "×",
+      defaultGreeting: "السلام علیکم!",
+    },
+  };
+  var strings = STRINGS.en; // updated once the eager config fetch resolves
+
   var root = document.createElement("div");
   root.id = "portableai-widget-root";
   root.style.cssText =
@@ -39,7 +57,7 @@
   document.body.appendChild(root);
 
   var launcher = document.createElement("button");
-  launcher.textContent = "Chat";
+  launcher.textContent = strings.launcherClosed;
   launcher.style.cssText =
     "width:56px;height:56px;border-radius:50%;border:none;background:#2563eb;color:#fff;font-size:14px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.25);";
   root.appendChild(launcher);
@@ -52,9 +70,19 @@
   var header = document.createElement("div");
   header.id = "portableai-header";
   header.style.cssText =
-    "padding:12px 16px;background:#2563eb;color:#fff;font-weight:600;";
-  header.textContent = "Chatbot";
+    "padding:12px 16px;background:#2563eb;color:#fff;font-weight:600;display:flex;align-items:center;gap:8px;";
   panel.appendChild(header);
+
+  var headerAvatar = document.createElement("img");
+  headerAvatar.id = "portableai-header-avatar";
+  headerAvatar.alt = "";
+  headerAvatar.style.cssText =
+    "width:24px;height:24px;border-radius:50%;object-fit:cover;display:none;flex:none;";
+  header.appendChild(headerAvatar);
+
+  var headerText = document.createElement("span");
+  headerText.textContent = "Chatbot";
+  header.appendChild(headerText);
 
   var messages = document.createElement("div");
   messages.id = "portableai-messages";
@@ -66,11 +94,11 @@
   form.style.cssText = "display:flex;gap:8px;padding:10px;border-top:1px solid #eee;";
   var input = document.createElement("input");
   input.type = "text";
-  input.placeholder = "Type a message...";
+  input.placeholder = strings.placeholder;
   input.style.cssText = "flex:1;padding:8px;border:1px solid #ddd;border-radius:6px;";
   form.appendChild(input);
   var send = document.createElement("button");
-  send.textContent = "Send";
+  send.textContent = strings.send;
   send.style.cssText =
     "padding:8px 14px;border:none;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer;";
   form.appendChild(send);
@@ -98,7 +126,7 @@
   function setBusy(busy) {
     send.disabled = busy;
     input.disabled = busy;
-    send.textContent = busy ? "..." : "Send";
+    send.textContent = busy ? "..." : strings.send;
   }
 
   function initSession(cb) {
@@ -122,8 +150,8 @@
         try {
           localStorage.setItem(sessionKey, sessionToken);
         } catch (e) {}
-        header.textContent = data.config.chatbot_name || "Chatbot";
-        renderMessage("assistant", data.config.welcome_message || "Hello!");
+        headerText.textContent = data.config.chatbot_name || "Chatbot";
+        renderMessage("assistant", data.config.welcome_message || strings.defaultGreeting);
         cb(null);
       })
       .catch(function () {
@@ -217,7 +245,7 @@
   launcher.addEventListener("click", function () {
     open = !open;
     panel.style.display = open ? "flex" : "none";
-    launcher.textContent = open ? "×" : "Chat";
+    launcher.textContent = open ? strings.launcherOpen : strings.launcherClosed;
   });
 
   form.addEventListener("submit", function (e) {
@@ -228,4 +256,54 @@
     }
     sendMessage(text);
   });
+
+  function applyPosition(position) {
+    var isLeft = position === "bottom_left";
+    root.style.left = isLeft ? "20px" : "";
+    root.style.right = isLeft ? "" : "20px";
+    panel.style.left = isLeft ? "20px" : "";
+    panel.style.right = isLeft ? "" : "20px";
+  }
+
+  function applyTheme(config) {
+    if (config.theme_color) {
+      launcher.style.background = config.theme_color;
+      header.style.background = config.theme_color;
+      send.style.background = config.theme_color;
+    }
+    if (config.widget_position) {
+      applyPosition(config.widget_position);
+    }
+    if (config.avatar_url) {
+      headerAvatar.src = apiBase + config.avatar_url;
+      headerAvatar.style.display = "inline-block";
+    }
+    strings = STRINGS[config.language] || STRINGS.en;
+    input.placeholder = strings.placeholder;
+    send.textContent = strings.send;
+    if (!open) {
+      launcher.textContent = strings.launcherClosed;
+    }
+    panel.setAttribute("dir", config.language === "ur" ? "rtl" : "ltr");
+  }
+
+  // Eager, session-less fetch so the always-visible launcher can theme
+  // itself before the visitor ever interacts. No session is created here;
+  // the lazy initSession()/first-message flow above is unrelated and unchanged.
+  fetch(
+    apiBase +
+      "/api/v1/public/widget/config?public_key=" +
+      encodeURIComponent(publicKey),
+  )
+    .then(function (r) {
+      return r.ok ? r.json() : null;
+    })
+    .then(function (config) {
+      if (config) {
+        applyTheme(config);
+      }
+    })
+    .catch(function () {
+      // Fail silently — the widget still works with its built-in defaults.
+    });
 })();

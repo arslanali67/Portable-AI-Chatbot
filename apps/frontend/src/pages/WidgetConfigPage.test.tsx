@@ -17,17 +17,34 @@ const EXISTING = {
   enabled: true,
   revoked_at: null,
   allowed_origins: ["https://example.com"],
+  theme_color: null,
+  widget_position: null,
+  avatar_url: null,
 };
 
-const CREATED = { public_key: "pk_new", enabled: true };
+const CREATED = {
+  public_key: "pk_new",
+  enabled: true,
+  revoked_at: null,
+  allowed_origins: [],
+  theme_color: null,
+  widget_position: null,
+  avatar_url: null,
+};
 
-function route(options: { get?: Response; post?: Response; del?: Response } = {}) {
-  const { get, post, del } = options;
+function route(
+  options: { get?: Response; post?: Response; patch?: Response; del?: Response; avatar?: Response } = {},
+) {
+  const { get, post, patch, del, avatar } = options;
   fetchMock.mockImplementation(async (input, init) => {
     const path = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
+    if (path.endsWith("/widget-config/avatar")) {
+      return avatar ?? jsonResponse(200, { ...EXISTING, avatar_url: "/widget-avatars/new.png" });
+    }
     if (path.endsWith("/widget-config")) {
       if (method === "POST") return post ?? jsonResponse(201, CREATED);
+      if (method === "PATCH") return patch ?? jsonResponse(200, { ...EXISTING, theme_color: "#112233" });
       if (method === "DELETE") return del ?? jsonResponse(204, null);
       return get ?? jsonResponse(200, EXISTING);
     }
@@ -88,7 +105,7 @@ describe("WidgetConfigPage", () => {
 
     expect(screen.getByText("Enabled: yes")).toBeInTheDocument();
     // The origins editor only exists in the no-credential create form.
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("https://example.com")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Revoke" })).toBeInTheDocument();
 
     const pre = container.querySelector("pre");
@@ -226,5 +243,91 @@ describe("WidgetConfigPage", () => {
 
     resolveDelete(jsonResponse(204, null));
     await screen.findByText(/No public widget credential yet/);
+  });
+
+  it("pre-fills the theme form from the loaded config", async () => {
+    route({
+      get: jsonResponse(200, { ...EXISTING, theme_color: "#2563eb", widget_position: "bottom_left" }),
+    });
+
+    renderPage();
+    await screen.findByText("pk_existing");
+
+    expect(screen.getByPlaceholderText("#2563eb")).toHaveValue("#2563eb");
+    expect(screen.getByRole("combobox")).toHaveValue("bottom_left");
+  });
+
+  it("saves theme changes via PATCH", async () => {
+    route();
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("pk_existing");
+
+    const colorInput = screen.getByPlaceholderText("#2563eb");
+    await user.clear(colorInput);
+    await user.type(colorInput, "#112233");
+    await user.selectOptions(screen.getByRole("combobox"), "bottom_left");
+    await user.click(screen.getByRole("button", { name: "Save theme" }));
+
+    await waitFor(() => expect(calls("PATCH")).toHaveLength(1));
+    const [, init] = calls("PATCH")[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({
+      theme_color: "#112233",
+      widget_position: "bottom_left",
+    });
+  });
+
+  it("sends theme_color as null when the field is cleared", async () => {
+    route({ get: jsonResponse(200, { ...EXISTING, theme_color: "#2563eb" }) });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("pk_existing");
+
+    const colorInput = screen.getByPlaceholderText("#2563eb");
+    await user.clear(colorInput);
+    await user.click(screen.getByRole("button", { name: "Save theme" }));
+
+    await waitFor(() => expect(calls("PATCH")).toHaveLength(1));
+    const [, init] = calls("PATCH")[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({
+      theme_color: null,
+      widget_position: null,
+    });
+  });
+
+  it("uploads an avatar and displays the returned image", async () => {
+    route();
+    const user = userEvent.setup();
+
+    const { container } = renderPage();
+    await screen.findByText("pk_existing");
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, new File(["fake"], "avatar.png", { type: "image/png" }));
+
+    await waitFor(() => {
+      const avatarPost = fetchMock.mock.calls.find((c) =>
+        String(c[0]).endsWith("/widget-config/avatar"),
+      );
+      expect(avatarPost).toBeDefined();
+      expect(avatarPost?.[1]?.body instanceof FormData).toBe(true);
+    });
+
+    const img = await screen.findByAltText("Widget avatar");
+    expect(img).toHaveAttribute("src", expect.stringContaining("/widget-avatars/new.png"));
+  });
+
+  it("shows an error when the theme save fails", async () => {
+    route({ patch: jsonResponse(422, { detail: "Invalid theme_color" }) });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("pk_existing");
+
+    await user.click(screen.getByRole("button", { name: "Save theme" }));
+
+    await screen.findByText("Invalid theme_color");
   });
 });
