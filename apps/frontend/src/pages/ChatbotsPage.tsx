@@ -30,6 +30,9 @@ export default function ChatbotsPage() {
   const [visibility, setVisibility] = useState<"public" | "private">("private");
   const [providerId, setProviderId] = useState("");
   const [modelId, setModelId] = useState("");
+  const [ragEnabled, setRagEnabled] = useState(true);
+  // Empty string = unset (NULL) -> use the global default top_k.
+  const [ragTopK, setRagTopK] = useState("");
 
   // Tracks in-flight mutations by a stable key (e.g. "save", "activate:12").
   // The ref guards against duplicate submissions synchronously (before React
@@ -95,6 +98,8 @@ export default function ChatbotsPage() {
     setVisibility("private");
     setProviderId(providers[0]?.provider_id ?? "");
     setModelId("");
+    setRagEnabled(true);
+    setRagTopK("");
   }
 
   function openCreate() {
@@ -114,6 +119,8 @@ export default function ChatbotsPage() {
     setVisibility(bot.visibility);
     setProviderId(bot.provider_id);
     setModelId(bot.model_id);
+    setRagEnabled(bot.rag_enabled);
+    setRagTopK(bot.rag_top_k === null ? "" : String(bot.rag_top_k));
     setShowCreate(true);
   }
 
@@ -127,6 +134,7 @@ export default function ChatbotsPage() {
       return;
     }
     setError(null);
+    const ragTopKValue = ragTopK === "" ? null : Number(ragTopK);
     try {
       if (editing) {
         await api.updateChatbot(orgId, editing.id, {
@@ -139,6 +147,8 @@ export default function ChatbotsPage() {
           visibility,
           provider_id: providerId,
           model_id: modelId,
+          rag_enabled: ragEnabled,
+          rag_top_k: ragTopKValue,
         });
       } else {
         await api.createChatbot(orgId, {
@@ -151,6 +161,8 @@ export default function ChatbotsPage() {
           visibility,
           provider_id: providerId,
           model_id: modelId,
+          rag_enabled: ragEnabled,
+          rag_top_k: ragTopKValue,
         });
       }
       setShowCreate(false);
@@ -319,6 +331,25 @@ export default function ChatbotsPage() {
                   </option>
                 ))}
               </select>
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={ragEnabled}
+                onChange={(e) => setRagEnabled(e.target.checked)}
+              />
+              RAG enabled
+            </label>
+            <label>
+              RAG top_k (blank = default)
+              <input
+                type="number"
+                value={ragTopK}
+                onChange={(e) => setRagTopK(e.target.value)}
+                min={1}
+                max={20}
+                disabled={!ragEnabled}
+              />
             </label>
           </div>
           <div className="form-actions">

@@ -90,6 +90,8 @@ class ChatbotService:
             visibility=payload.visibility,
             provider_id=payload.provider_id,
             model_id=payload.model_id,
+            rag_enabled=payload.rag_enabled,
+            rag_top_k=payload.rag_top_k,
         )
         try:
             await self.chatbots.db.commit()

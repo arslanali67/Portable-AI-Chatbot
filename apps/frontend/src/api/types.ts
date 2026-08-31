@@ -64,6 +64,8 @@ export interface Chatbot {
   language: string;
   provider_id: string;
   model_id: string;
+  rag_enabled: boolean;
+  rag_top_k: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -78,6 +80,8 @@ export interface ChatbotCreate {
   visibility: ChatbotVisibility;
   provider_id: string;
   model_id: string;
+  rag_enabled?: boolean;
+  rag_top_k?: number | null;
 }
 
 export interface ChatbotUpdate {
@@ -90,6 +94,8 @@ export interface ChatbotUpdate {
   visibility?: ChatbotVisibility;
   provider_id?: string;
   model_id?: string;
+  rag_enabled?: boolean;
+  rag_top_k?: number | null;
 }
 
 export type AICapability =

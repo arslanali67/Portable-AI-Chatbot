@@ -6,11 +6,13 @@ Require Docker PostgreSQL + alembic upgrade head. Run: pytest -m identity
 
 import asyncio
 import uuid
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from app.core.config import settings
 from app.main import app
 from app.models import User
 from tests.conftest import TestSessionLocal
@@ -138,6 +140,17 @@ async def _set_provider_model(chatbot_id: int, provider_id: str, model_id: str) 
                 "UPDATE chatbots SET provider_id = :pid, model_id = :mid WHERE id = :cid"
             ),
             {"pid": provider_id, "mid": model_id, "cid": chatbot_id},
+        )
+        await s.commit()
+
+
+async def _set_rag_config(chatbot_id: int, *, rag_enabled: bool, rag_top_k: int | None) -> None:
+    async with TestSessionLocal() as s:
+        await s.execute(
+            text(
+                "UPDATE chatbots SET rag_enabled = :enabled, rag_top_k = :top_k WHERE id = :cid"
+            ),
+            {"enabled": rag_enabled, "top_k": rag_top_k, "cid": chatbot_id},
         )
         await s.commit()
 
@@ -587,6 +600,82 @@ def test_chat_with_file_knowledge_reaches_ai_request() -> None:
         assert joined.count("What flavor is moon cheese?") == 1
     finally:
         gateway.providers, gateway.models = op, om
+
+
+# --- Per-chatbot RAG configuration ---
+
+
+def test_rag_disabled_skips_retrieval_service_entirely() -> None:
+    """rag_enabled=false must not call RetrievalService at all — not
+    called-and-discarded. Spy on the class, not just the response shape."""
+    gateway, op, om, capture = _capture_gateway()
+    try:
+        email = _email(f"noragspy{uuid.uuid4().hex[:6]}")
+        token = _login(_register(email)["email"])
+        org_id = _create_org(token, "Org", _slug(f"org{uuid.uuid4().hex[:6]}"))
+        bot_id = _create_bot(
+            token, org_id, _slug(f"bot{uuid.uuid4().hex[:6]}"), rag_enabled=False
+        )
+        _ingest_knowledge(token, org_id, bot_id, "The unicorn portal opens at midnight sharp.")
+        conv_id = _create_conv(token, org_id, bot_id)
+        with patch("app.services.chat_runtime.RetrievalService") as mock_retrieval:
+            r = _chat(token, org_id, conv_id, "When does the unicorn portal open?")
+            assert r.status_code == 200
+            mock_retrieval.assert_not_called()
+        joined = " ".join(m.content for m in capture.last_request.messages)
+        assert "<knowledge_context>" not in joined
+    finally:
+        gateway.providers, gateway.models = op, om
+
+
+def test_rag_disabled_still_generates_valid_response() -> None:
+    """Disabled RAG degrades to the existing empty-retrieval path: no crash,
+    no fake context, response still generated and persisted."""
+    gateway, op, om, capture = _capture_gateway()
+    try:
+        email = _email(f"noraggen{uuid.uuid4().hex[:6]}")
+        token = _login(_register(email)["email"])
+        org_id = _create_org(token, "Org", _slug(f"org{uuid.uuid4().hex[:6]}"))
+        bot_id = _create_bot(
+            token, org_id, _slug(f"bot{uuid.uuid4().hex[:6]}"), rag_enabled=False
+        )
+        _ingest_knowledge(token, org_id, bot_id, "The unicorn portal opens at midnight sharp.")
+        conv_id = _create_conv(token, org_id, bot_id)
+        r = _chat(token, org_id, conv_id, "When does the unicorn portal open?")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["assistant_message"]["content"] == "[capture] ok"
+        rows = asyncio.run(_messages(conv_id))
+        assert [(role, seq) for role, _, seq, _ in rows] == [("user", 1), ("assistant", 2)]
+    finally:
+        gateway.providers, gateway.models = op, om
+
+
+def test_rag_top_k_override_used_instead_of_global_default() -> None:
+    """A chatbot with rag_top_k set uses that value, not settings.rag_top_k,
+    at the RetrievalService.search() call site."""
+    override_top_k = 2
+    assert override_top_k != settings.rag_top_k
+    _, token, org_id, bot_id, conv_id = _setup()
+    asyncio.run(_set_rag_config(bot_id, rag_enabled=True, rag_top_k=override_top_k))
+    with patch("app.services.chat_runtime.RetrievalService") as mock_retrieval:
+        mock_retrieval.return_value.search = AsyncMock(return_value=[])
+        r = _chat(token, org_id, conv_id, "hello")
+        assert r.status_code == 200
+        _, _, _, top_k_arg = mock_retrieval.return_value.search.call_args.args
+        assert top_k_arg == override_top_k
+
+
+def test_rag_top_k_null_uses_global_default_unchanged() -> None:
+    """Regression: a chatbot that never opts into rag_top_k (NULL) keeps
+    using settings.rag_top_k exactly as before this feature existed."""
+    _, token, org_id, bot_id, conv_id = _setup()
+    with patch("app.services.chat_runtime.RetrievalService") as mock_retrieval:
+        mock_retrieval.return_value.search = AsyncMock(return_value=[])
+        r = _chat(token, org_id, conv_id, "hello")
+        assert r.status_code == 200
+        _, _, _, top_k_arg = mock_retrieval.return_value.search.call_args.args
+        assert top_k_arg == settings.rag_top_k
 
 
 # --- Real provider through runtime (mocked HTTP) ---

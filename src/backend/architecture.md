@@ -737,6 +737,14 @@ chunk content
 
 - Centralized config: `rag_top_k` (default 5, max 20), `rag_max_context_chars` (default 8000). Client cannot set them in `/chat`. Token-aware budgeting is future.
 
+### Per-Chatbot RAG Configuration
+
+- `chatbots.rag_enabled` (boolean, NOT NULL, default `true`) and `chatbots.rag_top_k` (integer, nullable) let each chatbot enable/disable retrieval and override `top_k` without touching the global default.
+- `rag_enabled=false`: `RetrievalService` is not called at all — not called-and-discarded. `ContextBuilder` receives an empty retrieved list and follows the existing "0 results" empty-retrieval path (system prompt + history + user message only, no fake context).
+- `rag_top_k=NULL` (the default for existing and newly created chatbots — no backfill) means "use `settings.rag_top_k`"; the global constant remains the platform default. When set, it replaces `settings.rag_top_k` at the two call sites in `ChatRuntimeService` that previously used it unconditionally — `chat()` and `stream_turn()` (the latter shared by the authenticated chat path and the public widget path) — passed to both `RetrievalService.search()` and `ContextBuilder(top_k=...)`.
+- Validation: `1 <= rag_top_k <= 20`, mirroring the existing bound on `KnowledgeSearchRequest.top_k` (`app/schemas/knowledge.py`) and this section's own documented default/max above — no new limit invented.
+- The manual knowledge-search debug endpoint (`POST .../knowledge/search`, `KnowledgeSearchRequest.top_k`) is unaffected — it stays independent of per-chatbot RAG config.
+
 ### Citations & Sources
 
 - Internal source metadata (`document_id`, `chunk_id`, `score`) retained in the knowledge context message for future citations; never expose vectors, DB internals, org data, or secrets.
@@ -1018,7 +1026,7 @@ CI therefore enforces the same verification commands developers run locally; it 
 
 ## 26. Out of Scope (current milestone)
 
-WebSocket transport, widget per-install customization beyond the current public config, recursive crawling/sitemaps/JS rendering/OCR, background workers, reranking, hybrid BM25+vector search, semantic cache, document versioning, automatic re-indexing, more embedding providers, per-chatbot RAG config, billing, analytics, agents, MCP, idempotency keys, usage persistence, retries/fallback/circuit breaker, provider/model DB tables, provider enable/disable mutation, platform-admin role.
+WebSocket transport, widget per-install customization beyond the current public config, recursive crawling/sitemaps/JS rendering/OCR, background workers, reranking, hybrid BM25+vector search, semantic cache, document versioning, automatic re-indexing, more embedding providers, billing, analytics, agents, MCP, idempotency keys, usage persistence, retries/fallback/circuit breaker, provider/model DB tables, provider enable/disable mutation, platform-admin role.
 
 ## 27. Future AI Gateway Extensions
 

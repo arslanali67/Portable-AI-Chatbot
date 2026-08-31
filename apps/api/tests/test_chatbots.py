@@ -402,3 +402,57 @@ def test_invalid_provider_id_422() -> None:
 def test_invalid_model_id_422() -> None:
     _, token, org_id = _setup_owner()
     assert _create_bot(token, org_id, model_id="bad model!").status_code == 422
+
+
+def test_rag_config_defaults() -> None:
+    _, token, org_id = _setup_owner()
+    bot = _create_bot(token, org_id).json()
+    assert bot["rag_enabled"] is True
+    assert bot["rag_top_k"] is None
+
+
+def test_rag_config_saved_on_create() -> None:
+    _, token, org_id = _setup_owner()
+    r = _create_bot(token, org_id, rag_enabled=False, rag_top_k=3)
+    assert r.status_code == 201
+    body = r.json()
+    assert body["rag_enabled"] is False
+    assert body["rag_top_k"] == 3
+
+
+def test_rag_config_patch() -> None:
+    _, token, org_id = _setup_owner()
+    bot = _create_bot(token, org_id).json()
+    r = client.patch(
+        f"/api/v1/organizations/{org_id}/chatbots/{bot['id']}",
+        json={"rag_enabled": False, "rag_top_k": 10},
+        headers=_auth(token),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["rag_enabled"] is False
+    assert body["rag_top_k"] == 10
+
+
+def test_rag_top_k_patch_can_be_cleared_back_to_default() -> None:
+    """Explicit null in the PATCH body clears rag_top_k back to NULL (use
+    the global default) — distinct from omitting the field entirely."""
+    _, token, org_id = _setup_owner()
+    bot = _create_bot(token, org_id, rag_top_k=8).json()
+    r = client.patch(
+        f"/api/v1/organizations/{org_id}/chatbots/{bot['id']}",
+        json={"rag_top_k": None},
+        headers=_auth(token),
+    )
+    assert r.status_code == 200
+    assert r.json()["rag_top_k"] is None
+
+
+def test_invalid_rag_top_k_too_low_422() -> None:
+    _, token, org_id = _setup_owner()
+    assert _create_bot(token, org_id, rag_top_k=0).status_code == 422
+
+
+def test_invalid_rag_top_k_too_high_422() -> None:
+    _, token, org_id = _setup_owner()
+    assert _create_bot(token, org_id, rag_top_k=21).status_code == 422

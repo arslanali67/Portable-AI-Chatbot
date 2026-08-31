@@ -31,6 +31,8 @@ class ChatbotCreate(BaseModel):
     model_id: str = Field(
         default="fake-model-small", min_length=1, max_length=100, pattern=ID_PATTERN
     )
+    rag_enabled: bool = True
+    rag_top_k: int | None = Field(default=None, ge=1, le=20)
 
     @field_validator("language")
     @classmethod
@@ -54,6 +56,8 @@ class ChatbotUpdate(BaseModel):
     visibility: ChatbotVisibility | None = None
     provider_id: str | None = Field(default=None, min_length=1, max_length=100, pattern=ID_PATTERN)
     model_id: str | None = Field(default=None, min_length=1, max_length=100, pattern=ID_PATTERN)
+    rag_enabled: bool | None = None
+    rag_top_k: int | None = Field(default=None, ge=1, le=20)
 
     @field_validator("language")
     @classmethod
@@ -80,5 +84,7 @@ class ChatbotResponse(BaseModel):
     language: str
     provider_id: str
     model_id: str
+    rag_enabled: bool
+    rag_top_k: int | None
     created_at: datetime
     updated_at: datetime

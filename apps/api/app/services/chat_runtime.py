@@ -22,13 +22,14 @@ from app.ai.exceptions import (
 )
 from app.ai.registry import gateway
 from app.core.config import settings
-from app.models import Conversation, Message, User
+from app.models import Chatbot, Conversation, Message, User
 from app.models.enums import ConversationStatus, MembershipRole, MessageRole
 from app.repositories.chatbot import ChatbotRepository
 from app.repositories.conversation import ConversationRepository
 from app.repositories.membership import MembershipRepository
 from app.repositories.message import MessageRepository
 from app.schemas.chat_runtime import ChatRequest, ChatResponse
+from app.schemas.knowledge import RetrievedChunkResponse
 from app.services.ai_provider_override import AIProviderOverrideService
 from app.services.context_builder import ContextBuilder
 from app.services.retrieval import (
@@ -68,6 +69,24 @@ class ChatRuntimeService:
         self.memberships = MembershipRepository(db_session)
         self.messages = MessageRepository(db_session)
 
+    async def _retrieve(
+        self, organization_id: int, chatbot: Chatbot, chatbot_id: int, query: str
+    ) -> tuple[list[RetrievedChunkResponse], int]:
+        """Per-chatbot RAG: skip RetrievalService entirely when disabled;
+        otherwise resolve top_k (chatbot override, else global default)."""
+        top_k = chatbot.rag_top_k if chatbot.rag_top_k is not None else settings.rag_top_k
+        if not chatbot.rag_enabled:
+            return [], top_k
+        try:
+            retrieved = await RetrievalService(self.messages.db).search(
+                organization_id, chatbot_id, query, top_k
+            )
+        except RetrievalChatbotNotFoundError as exc:
+            raise RuntimeErrorAI(500, "Chatbot configuration not found") from exc
+        except Exception as exc:  # noqa: BLE001 - retrieval boundary
+            raise RuntimeErrorAI(500, "Knowledge retrieval failed") from exc
+        return retrieved, top_k
+
     async def chat(
         self,
         user: User,
@@ -97,16 +116,11 @@ class ChatRuntimeService:
         # + RAG context via RetrievalService + ContextBuilder).
         history = await self._history_for_gateway(conversation_id)
         chatbot_id = conversation.chatbot_id
-        try:
-            retrieved = await RetrievalService(self.messages.db).search(
-                organization_id, chatbot_id, payload.content, settings.rag_top_k
-            )
-        except RetrievalChatbotNotFoundError as exc:
-            raise RuntimeErrorAI(500, "Chatbot configuration not found") from exc
-        except Exception as exc:  # noqa: BLE001 - retrieval boundary
-            raise RuntimeErrorAI(500, "Knowledge retrieval failed") from exc
+        retrieved, effective_top_k = await self._retrieve(
+            organization_id, chatbot, chatbot_id, payload.content
+        )
 
-        request = ContextBuilder().build(
+        request = ContextBuilder(top_k=effective_top_k).build(
             provider_id=chatbot.provider_id,
             model_id=chatbot.model_id,
             system_prompt=chatbot.system_prompt or None,
@@ -198,16 +212,11 @@ class ChatRuntimeService:
         # 2. History + RAG + ContextBuilder (same pipeline as normal chat).
         history = await self._history_for_gateway(conversation_id)
         chatbot_id = conversation.chatbot_id
-        try:
-            retrieved = await RetrievalService(self.messages.db).search(
-                organization_id, chatbot_id, payload.content, settings.rag_top_k
-            )
-        except RetrievalChatbotNotFoundError as exc:
-            raise RuntimeErrorAI(500, "Chatbot configuration not found") from exc
-        except Exception as exc:  # noqa: BLE001 - retrieval boundary
-            raise RuntimeErrorAI(500, "Knowledge retrieval failed") from exc
+        retrieved, effective_top_k = await self._retrieve(
+            organization_id, chatbot, chatbot_id, payload.content
+        )
 
-        request = ContextBuilder().build(
+        request = ContextBuilder(top_k=effective_top_k).build(
             provider_id=chatbot.provider_id,
             model_id=chatbot.model_id,
             system_prompt=chatbot.system_prompt or None,

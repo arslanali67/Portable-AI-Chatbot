@@ -67,6 +67,8 @@ const BOT_DRAFT: Chatbot = {
   language: "en",
   provider_id: "fake-a",
   model_id: "fake-model-small",
+  rag_enabled: true,
+  rag_top_k: null,
   created_at: "2026-08-01T10:00:00Z",
   updated_at: "2026-08-01T10:00:00Z",
 };
@@ -215,6 +217,8 @@ describe("ChatbotsPage", () => {
     expect(screen.getByLabelText("Welcome message")).toHaveValue("");
     expect(screen.getByLabelText("Language")).toHaveValue("en");
     expect(screen.getByLabelText("Visibility")).toHaveValue("private");
+    expect(screen.getByLabelText("RAG enabled")).toBeChecked();
+    expect(screen.getByLabelText("RAG top_k (blank = default)")).toHaveValue(null);
   });
 
   it("does not leak edited values into a subsequent New chatbot form (regression)", async () => {
@@ -375,6 +379,86 @@ describe("ChatbotsPage", () => {
 
     await screen.findByText("Invalid provider");
     expect(screen.getByRole("heading", { name: "Edit Draft Bot" })).toBeInTheDocument();
+  });
+
+  it("submits rag_enabled and a numeric rag_top_k on create", async () => {
+    route({ listBots: jsonResponse(200, []) });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("No chatbots yet. Create one to configure a chatbot.");
+
+    await user.click(screen.getByRole("button", { name: "New chatbot" }));
+    await screen.findByRole("option", { name: "Small A" });
+
+    await user.type(screen.getByLabelText("Name"), "RAG Bot");
+    await user.type(screen.getByLabelText("Slug"), "rag-bot");
+    await user.selectOptions(screen.getByLabelText("Model"), "fake-model-small");
+    // top_k is entered while RAG is still enabled (the input disables once
+    // RAG is turned off); the typed value must still be submitted.
+    await user.type(screen.getByLabelText("RAG top_k (blank = default)"), "7");
+    await user.click(screen.getByLabelText("RAG enabled"));
+
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(calls("POST", /\/chatbots$/)).toHaveLength(1));
+    const [, init] = calls("POST", /\/chatbots$/)[0];
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      rag_enabled: false,
+      rag_top_k: 7,
+    });
+  });
+
+  it("submits rag_top_k as null when left blank", async () => {
+    route({ listBots: jsonResponse(200, []) });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("No chatbots yet. Create one to configure a chatbot.");
+
+    await user.click(screen.getByRole("button", { name: "New chatbot" }));
+    await screen.findByRole("option", { name: "Small A" });
+
+    await user.type(screen.getByLabelText("Name"), "Default Bot");
+    await user.type(screen.getByLabelText("Slug"), "default-bot");
+    await user.selectOptions(screen.getByLabelText("Model"), "fake-model-small");
+
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(calls("POST", /\/chatbots$/)).toHaveLength(1));
+    const [, init] = calls("POST", /\/chatbots$/)[0];
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      rag_enabled: true,
+      rag_top_k: null,
+    });
+  });
+
+  it("enforces the 1-20 bound on the RAG top_k input", async () => {
+    route();
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("No chatbots yet. Create one to configure a chatbot.");
+
+    await user.click(screen.getByRole("button", { name: "New chatbot" }));
+
+    const topKInput = screen.getByLabelText("RAG top_k (blank = default)");
+    expect(topKInput).toHaveAttribute("min", "1");
+    expect(topKInput).toHaveAttribute("max", "20");
+  });
+
+  it("loads an existing chatbot's rag_enabled and rag_top_k into the edit form", async () => {
+    route({ listBots: jsonResponse(200, [{ ...BOT_DRAFT, rag_enabled: false, rag_top_k: 12 }]) });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("Draft Bot");
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await screen.findByRole("heading", { name: "Edit Draft Bot" });
+
+    expect(screen.getByLabelText("RAG enabled")).not.toBeChecked();
+    expect(screen.getByLabelText("RAG top_k (blank = default)")).toHaveValue(12);
   });
 
   it("activates a draft chatbot and reflects the refreshed status", async () => {

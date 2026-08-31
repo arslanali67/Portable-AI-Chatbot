@@ -45,6 +45,8 @@ class ChatbotRepository:
         visibility,
         provider_id: str,
         model_id: str,
+        rag_enabled: bool = True,
+        rag_top_k: int | None = None,
     ) -> Chatbot:
         chatbot = Chatbot(
             organization_id=organization_id,
@@ -57,6 +59,8 @@ class ChatbotRepository:
             visibility=visibility,
             provider_id=provider_id,
             model_id=model_id,
+            rag_enabled=rag_enabled,
+            rag_top_k=rag_top_k,
         )
         self.db.add(chatbot)
         return chatbot
