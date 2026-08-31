@@ -42,6 +42,9 @@ class Settings(BaseSettings):
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"
+    # "memory" (default, no infra required) | "redis" (multi-instance safe,
+    # requires REDIS_URL reachable; fails open on connection errors).
+    rate_limiter_backend: str = "memory"
 
     # CORS + trusted hosts
     cors_origins: list[str] = [

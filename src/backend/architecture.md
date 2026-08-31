@@ -1049,7 +1049,7 @@ Foundation implemented (`app/ai/`, `app/rag/`, SSE streaming, public widget). Fu
 
 ## 28. Explicitly Out of Scope
 
-OAuth, Google/GitHub login, email verification, MFA, Redis usage, more real providers, credential management UI, LangChain, LlamaIndex, agents, integrations, billing. (Password reset and refresh tokens shipped — see 'Refresh Token Rotation & Password Reset' below.)
+OAuth, Google/GitHub login, email verification, MFA, more real providers, credential management UI, LangChain, LlamaIndex, agents, integrations, billing. (Password reset and refresh tokens shipped — see 'Refresh Token Rotation & Password Reset' below.)
 
 ## 29. Production Hardening
 
@@ -1088,9 +1088,11 @@ OAuth, Google/GitHub login, email verification, MFA, Redis usage, more real prov
 
 ### Rate Limiting Abstraction
 
-- `app/core/rate_limit.py` defines a `RateLimiter` backend protocol with an in-memory sliding-window implementation (default).
-- Widget endpoints use per-session (30/hr) and per-IP (1000/hr) limiters created through a factory.
-- A Redis-backed implementation is a documented future backend — routes depend on the abstraction, not the concrete limiter, so swapping requires no route changes.
+- `app/core/rate_limit.py` defines a `RateLimiter` backend protocol with an in-memory sliding-window implementation (default) and a Redis-backed implementation, selected via `settings.rate_limiter_backend` (`"memory"` | `"redis"`, default `"memory"`) — routes depend on the abstraction, not the concrete limiter, so the existing 4 call sites needed zero changes.
+- Widget endpoints use per-session (30/hr) and per-IP (1000/hr) limiters created through a factory. Password-reset request endpoints use the same factory (5/hr per-email, 20/hr per-IP).
+- Redis backend: fixed-window `INCR key` + `EXPIRE key window_seconds` (set only on the first hit in a window) — matches the coarse abuse-prevention precision the existing limiters actually need, not a sorted-set sliding window. Uses a single shared, module-level `redis.ConnectionPool` with a synchronous `redis.Redis` client per limiter instance — synchronous because the `RateLimiter.allow()` protocol (and its 4 existing call sites) is synchronous, and changing that was out of scope for this milestone.
+- Fail-open: if Redis is unreachable, `allow()` logs at WARNING and returns `True` rather than rejecting the request or raising — a Redis outage degrades to "no rate limiting," never to an unrelated endpoint returning 500 or 429.
+- Local dev/test default stays the in-memory backend (matching this project's established "fake/local by default, real backend opt-in" convention) — Redis-backed tests are `@pytest.mark.integration`, run against a `redis:7-alpine` service container in both local docker-compose and CI, mirroring the existing Postgres integration-test pattern exactly.
 
 ### Authentication Hardening
 
