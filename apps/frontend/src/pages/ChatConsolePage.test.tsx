@@ -24,6 +24,7 @@ const CONV_A = {
 };
 
 const CONV_B = { ...CONV_A, id: 12, title: "Chat B" };
+const CONV_ARCHIVED = { ...CONV_A, id: 13, title: "Old Chat", status: "archived" };
 
 const MSGS_A = [
   {
@@ -63,17 +64,25 @@ function route(options: {
   messages?: Record<number, unknown[]>;
   create?: Response;
   stream?: Response | Promise<Response>;
+  archive?: Response;
+  update?: Response;
 } = {}) {
-  const { list = [], messages = {}, create, stream } = options;
+  const { list = [], messages = {}, create, stream, archive, update } = options;
   fetchMock.mockImplementation(async (input, init) => {
     const path = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
     if (path.endsWith("/chat/stream")) {
       return stream ?? sseResponse(["event: end\ndata: {}\n\n"]);
     }
+    if (/\/conversations\/\d+\/archive$/.test(path)) {
+      return archive ?? jsonResponse(200, { ...CONV_A, status: "archived" });
+    }
     if (/\/conversations\/\d+\/messages$/.test(path)) {
       const id = Number(path.match(/\/conversations\/(\d+)\/messages$/)?.[1]);
       return jsonResponse(200, { items: messages[id] ?? [], total: 0, limit: 100, offset: 0 });
+    }
+    if (/\/conversations\/\d+$/.test(path) && method === "PATCH") {
+      return update ?? jsonResponse(200, { ...CONV_A, title: "Renamed" });
     }
     if (path.endsWith("/conversations")) {
       if (method === "POST") return create ?? jsonResponse(201, CONV_B);
@@ -357,5 +366,118 @@ describe("ChatConsolePage", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     expect(fetchMock.mock.calls.some((c) => String(c[0]).endsWith("/chat/stream"))).toBe(false);
+  });
+
+  it("archives a conversation after confirmation and removes it from the default view", async () => {
+    route({ list: [CONV_A] });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("Chat A");
+
+    await user.click(screen.getByRole("button", { name: "Archive" }));
+
+    expect(confirmSpy).toHaveBeenCalledOnce();
+    await waitFor(() => {
+      const archiveCall = fetchMock.mock.calls.find((c) =>
+        String(c[0]).endsWith("/conversations/11/archive"),
+      );
+      expect(archiveCall).toBeDefined();
+      expect(archiveCall?.[1]?.method).toBe("POST");
+    });
+    await waitFor(() => expect(screen.queryByText("Chat A")).not.toBeInTheDocument());
+  });
+
+  it("does not archive when the confirmation is dismissed", async () => {
+    route({ list: [CONV_A] });
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("Chat A");
+
+    await user.click(screen.getByRole("button", { name: "Archive" }));
+
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).endsWith("/conversations/11/archive"))).toBe(false);
+    expect(screen.getByText("Chat A")).toBeInTheDocument();
+  });
+
+  it("renames a conversation via the inline control", async () => {
+    route({ list: [CONV_A], update: jsonResponse(200, { ...CONV_A, title: "Renamed Chat" }) });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("Chat A");
+
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    const editInput = screen.getByDisplayValue("Chat A");
+    await user.clear(editInput);
+    await user.type(editInput, "Renamed Chat");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const patchCall = fetchMock.mock.calls.find(
+        (c) => String(c[0]).endsWith("/conversations/11") && c[1]?.method === "PATCH",
+      );
+      expect(patchCall).toBeDefined();
+      expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual({ title: "Renamed Chat" });
+    });
+    await screen.findByText("Renamed Chat");
+  });
+
+  it("cancels rename without submitting", async () => {
+    route({ list: [CONV_A] });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("Chat A");
+
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await screen.findByDisplayValue("Chat A");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.getByRole("button", { name: "Chat A" })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some((c) => c[1]?.method === "PATCH")).toBe(false);
+  });
+
+  it("hides rename and archive controls for archived conversations", async () => {
+    route({ list: [CONV_ARCHIVED] });
+    const user = userEvent.setup();
+
+    renderPage();
+    await user.click(screen.getByLabelText("Show archived"));
+
+    await screen.findByText(/Old Chat/);
+    expect(screen.queryByRole("button", { name: "Rename" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Archive" })).not.toBeInTheDocument();
+  });
+
+  it("hides archived conversations by default and reveals them via the toggle", async () => {
+    route({ list: [CONV_A, CONV_ARCHIVED] });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("Chat A");
+    expect(screen.queryByText(/Old Chat/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByLabelText("Show archived"));
+
+    await screen.findByText(/Old Chat/);
+    expect(screen.getByText("Chat A")).toBeInTheDocument();
+  });
+
+  it("disables the message composer for a selected archived conversation", async () => {
+    route({ list: [CONV_ARCHIVED], messages: { 13: [] } });
+    const user = userEvent.setup();
+
+    renderPage();
+    await user.click(screen.getByLabelText("Show archived"));
+    await screen.findByText(/Old Chat/);
+
+    await user.click(screen.getByRole("button", { name: /Old Chat/ }));
+
+    await screen.findByText("This conversation is archived and can't receive new messages.");
+    expect(screen.queryByPlaceholderText("Type a message…")).not.toBeInTheDocument();
   });
 });

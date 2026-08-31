@@ -167,6 +167,72 @@ def test_archive_conversation() -> None:
     assert r.json()["status"] == "archived"
 
 
+def _rename(token: str, org_id: int, conv_id: int, title):
+    return client.patch(
+        f"/api/v1/organizations/{org_id}/conversations/{conv_id}",
+        json={"title": title},
+        headers=_auth(token),
+    )
+
+
+def test_rename_conversation() -> None:
+    _, token, org_id, bot_id = _setup_owner()
+    conv = _create_conv(token, org_id, bot_id)
+    r = _rename(token, org_id, conv["id"], "Renamed")
+    assert r.status_code == 200, r.text
+    assert r.json()["title"] == "Renamed"
+
+
+def test_rename_empty_title_422() -> None:
+    _, token, org_id, bot_id = _setup_owner()
+    conv = _create_conv(token, org_id, bot_id)
+    assert _rename(token, org_id, conv["id"], "").status_code == 422
+
+
+def test_rename_too_long_title_422() -> None:
+    _, token, org_id, bot_id = _setup_owner()
+    conv = _create_conv(token, org_id, bot_id)
+    assert _rename(token, org_id, conv["id"], "x" * 256).status_code == 422
+
+
+def test_rename_max_length_boundary_accepted() -> None:
+    """255 chars is the same bound ConversationCreate.title already accepts."""
+    _, token, org_id, bot_id = _setup_owner()
+    conv = _create_conv(token, org_id, bot_id)
+    r = _rename(token, org_id, conv["id"], "x" * 255)
+    assert r.status_code == 200, r.text
+
+
+def test_member_cannot_rename_another_member_conversation() -> None:
+    _, owner_token, org_id, bot_id = _setup_owner()
+    member1 = _setup_member(org_id, "member")
+    member2 = _setup_member(org_id, "member")
+    conv = _create_conv(member1, org_id, bot_id)
+    r = _rename(member2, org_id, conv["id"], "Hijacked")
+    assert r.status_code == 403
+
+
+def test_owner_can_rename_members_conversation() -> None:
+    _, owner_token, org_id, bot_id = _setup_owner()
+    member_token = _setup_member(org_id, "member")
+    conv = _create_conv(member_token, org_id, bot_id)
+    r = _rename(owner_token, org_id, conv["id"], "Renamed by owner")
+    assert r.status_code == 200, r.text
+    assert r.json()["title"] == "Renamed by owner"
+
+
+def test_cannot_rename_archived_conversation() -> None:
+    _, token, org_id, bot_id = _setup_owner()
+    conv = _create_conv(token, org_id, bot_id)
+    r = client.post(
+        f"/api/v1/organizations/{org_id}/conversations/{conv['id']}/archive",
+        headers=_auth(token),
+    )
+    assert r.status_code == 200
+    r2 = _rename(token, org_id, conv["id"], "Too late")
+    assert r2.status_code == 409, r2.text
+
+
 def test_cannot_create_conversation_for_other_org_chatbot() -> None:
     _, token_a, org_a, bot_a = _setup_owner()
     _, token_b, org_b, bot_b = _setup_owner()
@@ -361,6 +427,34 @@ def test_pagination() -> None:
         headers=_auth(token),
     )
     assert [m["sequence_number"] for m in r2.json()["items"]] == [3, 4]
+
+
+def test_list_sorts_by_last_activity_not_creation_order() -> None:
+    """Proves updated_at-on-message actually changes ordering, not just
+    that the column exists: A is created first (older by id/created_at),
+    then a message lands on A after B is created, so A must sort first."""
+    _, token, org_id, bot_id = _setup_owner()
+    conv_a = _create_conv(token, org_id, bot_id, title="A")
+    conv_b = _create_conv(token, org_id, bot_id, title="B")
+
+    r = client.get(
+        f"/api/v1/organizations/{org_id}/chatbots/{bot_id}/conversations",
+        headers=_auth(token),
+    )
+    titles_before = [c["title"] for c in r.json()["items"]]
+    assert titles_before == ["B", "A"], "sanity: newest-created listed first"
+
+    assert _post_message(token, org_id, conv_a["id"], "wake A up").status_code == 201
+
+    r2 = client.get(
+        f"/api/v1/organizations/{org_id}/chatbots/{bot_id}/conversations",
+        headers=_auth(token),
+    )
+    titles_after = [c["title"] for c in r2.json()["items"]]
+    assert titles_after == ["A", "B"], (
+        "A received a message after B was created, so A must now sort first "
+        "by last activity — proves updated_at is actually touched, not just present"
+    )
 
 
 # --- Roles ---

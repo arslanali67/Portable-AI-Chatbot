@@ -22,8 +22,39 @@ export default function ChatConsolePage() {
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [renameText, setRenameText] = useState("");
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Tracks in-flight mutations by a stable key (e.g. "archive:12", "rename:12").
+  // Mirrors ChatbotsPage.tsx's pending-action pattern: the ref guards against
+  // duplicate submissions synchronously, the state drives the UI.
+  const pendingRef = useRef<Set<string>>(new Set());
+  const [pendingActions, setPendingActions] = useState<Set<string>>(new Set());
+
+  function isPending(key: string): boolean {
+    return pendingActions.has(key);
+  }
+
+  function beginPending(key: string): boolean {
+    if (pendingRef.current.has(key)) {
+      return false;
+    }
+    pendingRef.current.add(key);
+    setPendingActions((prev) => new Set(prev).add(key));
+    return true;
+  }
+
+  function endPending(key: string) {
+    pendingRef.current.delete(key);
+    setPendingActions((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  }
 
 // Monotonic, session-unique negative ids for optimistic/temporary messages.
 // Persisted messages use positive DB ids; the negatives can never collide
@@ -76,6 +107,57 @@ function nextClientMessageId(): number {
       setError(errorMessage(err));
     } finally {
       setLoadingConv(false);
+    }
+  }
+
+  async function archive(conv: Conversation) {
+    if (!window.confirm(`Archive "${conv.title}"? It stays readable but can't receive new messages.`)) {
+      return;
+    }
+    const key = `archive:${conv.id}`;
+    if (!beginPending(key)) {
+      return;
+    }
+    setError(null);
+    try {
+      const updated = await api.archiveConversation(orgId, conv.id);
+      setConversations((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      endPending(key);
+    }
+  }
+
+  function startRename(conv: Conversation) {
+    setRenamingId(conv.id);
+    setRenameText(conv.title);
+  }
+
+  function cancelRename() {
+    setRenamingId(null);
+    setRenameText("");
+  }
+
+  async function saveRename(conv: Conversation) {
+    const title = renameText.trim();
+    if (!title) {
+      return;
+    }
+    const key = `rename:${conv.id}`;
+    if (!beginPending(key)) {
+      return;
+    }
+    setError(null);
+    try {
+      const updated = await api.updateConversation(orgId, conv.id, title);
+      setConversations((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      setRenamingId(null);
+      setRenameText("");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      endPending(key);
     }
   }
 
@@ -190,6 +272,12 @@ function nextClientMessageId(): number {
     }
   }
 
+  const visibleConversations = showArchived
+    ? conversations
+    : conversations.filter((c) => c.status === "active");
+  const selectedConversation = conversations.find((c) => c.id === selected) ?? null;
+  const selectedIsArchived = selectedConversation?.status === "archived";
+
   return (
     <div className="console-layout">
       <div className="console-side">
@@ -203,19 +291,67 @@ function nextClientMessageId(): number {
             New
           </button>
         </form>
-        {conversations.length === 0 ? (
-          <p className="muted small">No conversations yet.</p>
+        <label className="muted small">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(e) => setShowArchived(e.target.checked)}
+          />
+          Show archived
+        </label>
+        {visibleConversations.length === 0 ? (
+          <p className="muted small">
+            {conversations.length === 0 ? "No conversations yet." : "No conversations to show."}
+          </p>
         ) : (
           <ul className="conv-list">
-            {conversations.map((conv) => (
+            {visibleConversations.map((conv) => (
               <li key={conv.id}>
-                <button
-                  className={`conv-item ${selected === conv.id ? "active" : ""}`}
-                  onClick={() => setSelected(conv.id)}
-                  title={conv.status}
-                >
-                  {conv.title}
-                </button>
+                {renamingId === conv.id ? (
+                  <div className="conv-rename">
+                    <input
+                      value={renameText}
+                      onChange={(e) => setRenameText(e.target.value)}
+                      maxLength={255}
+                      autoFocus
+                    />
+                    <button
+                      className="link-button"
+                      onClick={() => saveRename(conv)}
+                      disabled={isPending(`rename:${conv.id}`)}
+                    >
+                      {isPending(`rename:${conv.id}`) ? "Saving…" : "Save"}
+                    </button>
+                    <button className="link-button" onClick={cancelRename}>
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      className={`conv-item ${selected === conv.id ? "active" : ""}`}
+                      onClick={() => setSelected(conv.id)}
+                      title={conv.status}
+                    >
+                      {conv.title}
+                      {conv.status === "archived" && <span className="muted small"> (archived)</span>}
+                    </button>
+                    {conv.status === "active" && (
+                      <div className="conv-actions">
+                        <button className="link-button" onClick={() => startRename(conv)}>
+                          Rename
+                        </button>
+                        <button
+                          className="link-button"
+                          onClick={() => archive(conv)}
+                          disabled={isPending(`archive:${conv.id}`)}
+                        >
+                          {isPending(`archive:${conv.id}`) ? "Archiving…" : "Archive"}
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
               </li>
             ))}
           </ul>
@@ -241,18 +377,22 @@ function nextClientMessageId(): number {
                 </div>
               ))}
             </div>
-            <form className="console-input" onSubmit={sendMessage}>
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Type a message…"
-                disabled={streaming}
-                autoFocus
-              />
-              <button type="submit" disabled={streaming || !selected}>
-                {streaming ? "…" : "Send"}
-              </button>
-            </form>
+            {selectedIsArchived ? (
+              <p className="muted small">This conversation is archived and can't receive new messages.</p>
+            ) : (
+              <form className="console-input" onSubmit={sendMessage}>
+                <input
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Type a message…"
+                  disabled={streaming}
+                  autoFocus
+                />
+                <button type="submit" disabled={streaming || !selected}>
+                  {streaming ? "…" : "Send"}
+                </button>
+              </form>
+            )}
           </>
         )}
         {error && <div className="error-box">{error}</div>}

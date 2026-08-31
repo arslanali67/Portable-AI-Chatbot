@@ -17,6 +17,7 @@ from app.schemas.conversation import (
     ConversationCreate,
     ConversationListResponse,
     ConversationResponse,
+    ConversationUpdate,
     MessageCreate,
     MessageListResponse,
     MessageResponse,
@@ -32,6 +33,7 @@ from app.services.chat_runtime import (
 from app.services.conversation import (
     ArchivePermissionError,
     ChatbotNotFoundError,
+    ConversationArchivedError as UpdateArchivedError,
     ConversationNotFoundError,
     ConversationService,
     InvalidArchiveError,
@@ -119,6 +121,33 @@ async def get_conversation(
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your conversation")
     return conversation
+
+
+@router.patch(
+    "/organizations/{organization_id}/conversations/{conversation_id}",
+    response_model=ConversationResponse,
+)
+async def update_conversation(
+    organization_id: int,
+    conversation_id: int,
+    payload: ConversationUpdate,
+    current_user: User = Depends(get_current_user),
+    _membership: Membership = require_member,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await ConversationService(db).update(
+            current_user, organization_id, conversation_id, payload
+        )
+    except ConversationNotFoundError:
+        raise _conversation_404()
+    except ArchivePermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only owner/admin may rename others' conversations",
+        )
+    except UpdateArchivedError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Conversation is archived")
 
 
 # --- Messages ---

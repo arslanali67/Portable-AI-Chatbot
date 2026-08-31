@@ -2,10 +2,10 @@
 
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Message
+from app.models import Conversation, Message
 from app.models.enums import MessageRole
 
 
@@ -30,6 +30,15 @@ class MessageRepository:
             metadata_json=metadata,
         )
         self.db.add(message)
+        # Single seam for every message-creation call site (chat_runtime.py's
+        # user + assistant inserts, MessageService's user-message insert, and
+        # the public widget path via ChatRuntimeService) so the conversation
+        # list can sort by last activity, not just creation order.
+        await self.db.execute(
+            update(Conversation)
+            .where(Conversation.id == conversation_id)
+            .values(updated_at=func.now())
+        )
         return message
 
     async def get_latest_sequence(self, conversation_id: int) -> int:

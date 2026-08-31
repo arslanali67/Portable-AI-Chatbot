@@ -325,7 +325,7 @@ Fields: `id`, `conversation_id`, `role`, `content`, `sequence_number`, `created_
 
 ### Deletion Policy
 
-- No conversation DELETE endpoint. Archive only. Permanent deletion policy comes later (history may support analytics, RAG, debugging, usage, audit, support).
+- No conversation DELETE endpoint. Archive only. Permanent deletion policy comes later (history may support analytics, RAG, debugging, usage, audit, support). Rename (`PATCH`, `title` only) exists alongside archive, with the same owner/admin-any + member-own permission rule as archive; rename is blocked on an archived conversation — the same frozen-state rejection that already blocks new messages.
 
 ### Tenant & Chatbot Isolation
 

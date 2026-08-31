@@ -386,6 +386,12 @@ export const api = {
       { method: "POST" },
     );
   },
+  updateConversation(orgId: number, conversationId: number, title: string): Promise<Conversation> {
+    return request<Conversation>(
+      `/api/v1/organizations/${orgId}/conversations/${conversationId}`,
+      { method: "PATCH", ...jsonBody({ title }) },
+    );
+  },
 
   // Knowledge
   listDocuments(orgId: number, chatbotId: number): Promise<KnowledgeDocumentList> {

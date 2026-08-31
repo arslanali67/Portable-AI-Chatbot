@@ -7,7 +7,7 @@ from app.models.enums import ConversationStatus, MembershipRole
 from app.repositories.chatbot import ChatbotRepository
 from app.repositories.conversation import ConversationRepository
 from app.repositories.membership import MembershipRepository
-from app.schemas.conversation import ConversationCreate, MAX_LIST_LIMIT
+from app.schemas.conversation import ConversationCreate, ConversationUpdate, MAX_LIST_LIMIT
 
 
 class ConversationNotFoundError(Exception):
@@ -23,6 +23,14 @@ class InvalidArchiveError(Exception):
 
 
 class ArchivePermissionError(Exception):
+    pass
+
+
+class ConversationArchivedError(Exception):
+    """Raised when a mutation (currently: rename) is attempted on a
+    non-active conversation. Local to this module, matching the same
+    per-service exception pattern already used in message.py/chat_runtime.py."""
+
     pass
 
 
@@ -96,6 +104,29 @@ class ConversationService:
             raise InvalidArchiveError("conversation is not active")
 
         conversation.status = ConversationStatus.ARCHIVED
+        await self.conversations.db.commit()
+        await self.conversations.db.refresh(conversation)
+        return conversation
+
+    async def update(
+        self, user: User, organization_id: int, conversation_id: int, payload: ConversationUpdate
+    ) -> Conversation:
+        conversation = await self.get(organization_id, conversation_id)
+
+        # Same permission check as archive(), verbatim.
+        membership = await self.memberships.get(user.id, organization_id)
+        is_owner_or_admin = (
+            membership is not None
+            and membership.role in (MembershipRole.OWNER, MembershipRole.ADMIN)
+        )
+        if not is_owner_or_admin and conversation.user_id != user.id:
+            raise ArchivePermissionError()
+
+        if conversation.status != ConversationStatus.ACTIVE:
+            raise ConversationArchivedError()
+
+        for field, value in payload.model_dump(exclude_unset=True).items():
+            setattr(conversation, field, value)
         await self.conversations.db.commit()
         await self.conversations.db.refresh(conversation)
         return conversation

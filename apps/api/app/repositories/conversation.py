@@ -54,7 +54,7 @@ class ConversationRepository:
         result = await self.db.execute(
             select(Conversation)
             .where(*conditions)
-            .order_by(Conversation.id.desc())
+            .order_by(Conversation.updated_at.desc())
             .limit(limit)
             .offset(offset)
         )
