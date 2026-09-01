@@ -11,10 +11,25 @@ export default defineConfig({
     // non-functional without --localstorage-file) shadows jsdom's
     // window.localStorage in worker processes; disable it so jsdom's wins.
     execArgv: ["--no-experimental-webstorage"],
+    // Default pattern (src/**) made explicit, plus packages/widget's own
+    // test file — that package has no build step/tooling of its own, so
+    // its tests reuse this already-installed Vitest+jsdom setup rather
+    // than standing up a second toolchain for one file.
+    include: [
+      "src/**/*.{test,spec}.{ts,tsx}",
+      "../../packages/widget/**/*.{test,spec}.js",
+    ],
   },
 
   server: {
     port: 3000,
+
+    fs: {
+      // Allow serving packages/widget/widget.test.js (a sibling of this
+      // app, outside the default project-root fs boundary) so Vitest can
+      // load it — see test.include below.
+      allow: ["../.."],
+    },
 
     proxy: {
       "/api": {

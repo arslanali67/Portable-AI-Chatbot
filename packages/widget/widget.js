@@ -1,6 +1,10 @@
 /* PortableAI embeddable chatbot widget — vanilla JS, no dependencies.
  * Load via: <script src="/widget.js" data-chatbot="PUBLIC_KEY" async></script>
- * Renders messages as plain text (textContent) — never innerHTML with untrusted content.
+ * Renders messages via safe, explicitly-constructed DOM nodes
+ * (document.createElement + textContent/createTextNode) — a minimal
+ * bold/bullet-list markdown parser (see parseInlineMarkdown) builds a
+ * DocumentFragment the same way. Never innerHTML, never an HTML string
+ * built from untrusted content, anywhere in this file.
  */
 (function () {
   "use strict";
@@ -123,6 +127,63 @@
     renderMessage("assistant", text);
   }
 
+  var BULLET_LINE = /^[-*]\s+(.*)$/;
+  var BOLD_SPAN = /(\*\*[^*\n]+\*\*)/;
+
+  // Splits a line of text on **bold** spans and appends each piece to
+  // `parent` as either a <strong> element (textContent only) or a plain
+  // text node — never innerHTML, never an HTML string.
+  function appendInlineSpans(parent, text) {
+    var parts = text.split(BOLD_SPAN);
+    for (var i = 0; i < parts.length; i++) {
+      var part = parts[i];
+      if (!part) {
+        continue;
+      }
+      if (part.length > 4 && part.slice(0, 2) === "**" && part.slice(-2) === "**") {
+        var strong = document.createElement("strong");
+        strong.textContent = part.slice(2, -2);
+        parent.appendChild(strong);
+      } else {
+        parent.appendChild(document.createTextNode(part));
+      }
+    }
+  }
+
+  // Minimal markdown -> safe DOM: bold (**text**) and bullet lists (lines
+  // starting with "- " or "* ") only. Returns a DocumentFragment built
+  // entirely via document.createElement/createTextNode — the caller can
+  // appendChild it directly. No other markdown constructs are recognized;
+  // unrecognized syntax (headings, links, code, numbered lists, ...) is
+  // left as literal text, matching today's behavior for anything this
+  // parser doesn't handle.
+  function parseInlineMarkdown(text) {
+    var frag = document.createDocumentFragment();
+    var lines = text.split("\n");
+    var i = 0;
+    while (i < lines.length) {
+      if (BULLET_LINE.test(lines[i])) {
+        var ul = document.createElement("ul");
+        ul.style.cssText = "margin:4px 0;padding-left:20px;";
+        while (i < lines.length && BULLET_LINE.test(lines[i])) {
+          var li = document.createElement("li");
+          appendInlineSpans(li, BULLET_LINE.exec(lines[i])[1]);
+          ul.appendChild(li);
+          i++;
+        }
+        frag.appendChild(ul);
+      } else {
+        var plain = [];
+        while (i < lines.length && !BULLET_LINE.test(lines[i])) {
+          plain.push(lines[i]);
+          i++;
+        }
+        appendInlineSpans(frag, plain.join("\n"));
+      }
+    }
+    return frag;
+  }
+
   function setBusy(busy) {
     send.disabled = busy;
     input.disabled = busy;
@@ -226,7 +287,13 @@
               } else if (event === "error") {
                 placeholder.textContent = data.detail || "Error";
               } else if (event === "end") {
-                placeholder.textContent = accumulated || placeholder.textContent;
+                // Message is complete — parse once (never mid-stream) and
+                // replace the raw accumulated text with safe, constructed
+                // DOM nodes. Falls back to the placeholder's existing raw
+                // text if the stream ended with nothing accumulated.
+                var finalText = accumulated || placeholder.textContent;
+                placeholder.textContent = "";
+                placeholder.appendChild(parseInlineMarkdown(finalText));
               }
             });
             return pump();
@@ -306,4 +373,18 @@
     .catch(function () {
       // Fail silently — the widget still works with its built-in defaults.
     });
+
+  // Test-only hook: `module` is never defined in a real browser (this file
+  // is loaded as a plain <script>, not a CommonJS module), so this branch
+  // is dead code in production and adds nothing to what ships. It exists
+  // solely so the test suite (running under Node/Vitest) can reach
+  // internal functions without a build step or a second copy of this file.
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = {
+      parseInlineMarkdown: parseInlineMarkdown,
+      renderMessage: renderMessage,
+      sendMessage: sendMessage,
+      messagesEl: messages,
+    };
+  }
 })();

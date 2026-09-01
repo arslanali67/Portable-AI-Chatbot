@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 
 import { api, streamChat } from "../api/client";
 import { errorMessage } from "../auth/AuthContext";
+import MessageMarkdown from "../components/MessageMarkdown";
 import type { Conversation, Message } from "../api/types";
 
 export default function ChatConsolePage() {
@@ -373,7 +374,9 @@ function nextClientMessageId(): number {
               {messages.map((m) => (
                 <div key={m.id} className={`bubble bubble-${m.role}`}>
                   <div className="bubble-role">{m.role}</div>
-                  <div className="bubble-content">{m.content}</div>
+                  <div className="bubble-content">
+                    <MessageMarkdown content={m.content} />
+                  </div>
                 </div>
               ))}
             </div>
