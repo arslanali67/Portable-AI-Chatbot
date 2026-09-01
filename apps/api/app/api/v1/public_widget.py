@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.logging import get_logger
 from app.core.rate_limit import widget_ip_rate_limiter, widget_rate_limiter
 from app.models import Chatbot, Conversation, WidgetConfig, WidgetSession
 from app.schemas.public_widget import (
@@ -32,6 +33,7 @@ from app.services.public_widget import (
 )
 
 router = APIRouter(prefix="/public/widget", tags=["public-widget"])
+logger = get_logger("portableai.public_widget")
 
 
 def _widget_error(exc: WidgetError) -> HTTPException:
@@ -156,6 +158,7 @@ async def stream_chat(
         except RuntimeErrorAI as exc:
             yield f"event: error\ndata: {json.dumps({'detail': exc.detail})}\n\n"
         except Exception:  # noqa: BLE001 - safe boundary
+            logger.exception("Unhandled error in widget chat stream")
             yield f"event: error\ndata: {json.dumps({'detail': 'Streaming failed'})}\n\n"
 
     return StreamingResponse(

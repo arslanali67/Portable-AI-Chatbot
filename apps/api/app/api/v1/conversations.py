@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_organization_role
+from app.core.logging import get_logger
 from app.models import Membership, User
 from app.models.enums import MembershipRole
 from app.schemas.conversation import (
@@ -46,6 +47,7 @@ from app.services.message import (
 )
 
 router = APIRouter(tags=["conversations"])
+logger = get_logger("portableai.conversations")
 
 require_member = Depends(require_organization_role(MembershipRole.MEMBER))
 
@@ -310,6 +312,7 @@ async def stream_chat_with_conversation(
         except RuntimeErrorAI as exc:
             yield f"event: error\ndata: {json.dumps({'detail': exc.detail})}\n\n"
         except Exception:  # noqa: BLE001 - safe boundary
+            logger.exception("Unhandled error in conversation chat stream")
             yield f"event: error\ndata: {json.dumps({'detail': 'Streaming failed'})}\n\n"
 
     return StreamingResponse(

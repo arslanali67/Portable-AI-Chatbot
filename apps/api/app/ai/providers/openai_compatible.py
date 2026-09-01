@@ -150,17 +150,23 @@ class OpenAICompatibleHTTPProvider(OpenAICompatibleProvider):
                 },
             }
         if request.tools is not None:
-            payload["tools"] = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": tool["name"],
-                        "description": tool.get("description", ""),
-                        "parameters": tool["parameters"],
-                    },
-                }
-                for tool in request.tools
-            ]
+            built_tools = []
+            for tool in request.tools:
+                if not isinstance(tool, dict) or "name" not in tool or "parameters" not in tool:
+                    raise AIInvalidRequestError(
+                        "each tool definition requires 'name' and 'parameters'"
+                    )
+                built_tools.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": tool["name"],
+                            "description": tool.get("description", ""),
+                            "parameters": tool["parameters"],
+                        },
+                    }
+                )
+            payload["tools"] = built_tools
         # metadata is intentionally not sent to the provider.
         return payload
 
