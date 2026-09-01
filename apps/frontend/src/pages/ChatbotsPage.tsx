@@ -35,6 +35,8 @@ export default function ChatbotsPage() {
   const [ragTopK, setRagTopK] = useState("");
   // Empty string = unset (NULL) -> today's free-text behavior, unchanged.
   const [responseSchemaText, setResponseSchemaText] = useState("");
+  // Empty string = unset (NULL/empty) -> no tools, today's behavior unchanged.
+  const [toolsText, setToolsText] = useState("");
 
   // Tracks in-flight mutations by a stable key (e.g. "save", "activate:12").
   // The ref guards against duplicate submissions synchronously (before React
@@ -103,6 +105,7 @@ export default function ChatbotsPage() {
     setRagEnabled(true);
     setRagTopK("");
     setResponseSchemaText("");
+    setToolsText("");
   }
 
   function openCreate() {
@@ -127,6 +130,9 @@ export default function ChatbotsPage() {
     setResponseSchemaText(
       bot.response_schema === null ? "" : JSON.stringify(bot.response_schema, null, 2),
     );
+    setToolsText(
+      bot.tools === null || bot.tools.length === 0 ? "" : JSON.stringify(bot.tools, null, 2),
+    );
     setShowCreate(true);
   }
 
@@ -142,6 +148,15 @@ export default function ChatbotsPage() {
         responseSchemaValue = JSON.parse(responseSchemaText);
       } catch {
         setError("Response schema must be valid JSON.");
+        return;
+      }
+    }
+    let toolsValue: Record<string, unknown>[] | null = null;
+    if (toolsText.trim() !== "") {
+      try {
+        toolsValue = JSON.parse(toolsText);
+      } catch {
+        setError("Tool definitions must be valid JSON.");
         return;
       }
     }
@@ -165,6 +180,7 @@ export default function ChatbotsPage() {
           rag_enabled: ragEnabled,
           rag_top_k: ragTopKValue,
           response_schema: responseSchemaValue,
+          tools: toolsValue,
         });
       } else {
         await api.createChatbot(orgId, {
@@ -180,6 +196,7 @@ export default function ChatbotsPage() {
           rag_enabled: ragEnabled,
           rag_top_k: ragTopKValue,
           response_schema: responseSchemaValue,
+          tools: toolsValue,
         });
       }
       setShowCreate(false);
@@ -374,6 +391,15 @@ export default function ChatbotsPage() {
                 value={responseSchemaText}
                 onChange={(e) => setResponseSchemaText(e.target.value)}
                 placeholder={'{\n  "type": "object",\n  "properties": { "answer": { "type": "string" } },\n  "required": ["answer"]\n}'}
+                rows={6}
+              />
+            </label>
+            <label className="full">
+              Tool definitions (JSON array, blank = no tools)
+              <textarea
+                value={toolsText}
+                onChange={(e) => setToolsText(e.target.value)}
+                placeholder={'[\n  {\n    "name": "get_weather",\n    "description": "Get current weather",\n    "parameters": { "type": "object", "properties": { "location": { "type": "string" } }, "required": ["location"] }\n  }\n]'}
                 rows={6}
               />
             </label>

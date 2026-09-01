@@ -48,6 +48,7 @@ class ChatbotRepository:
         rag_enabled: bool = True,
         rag_top_k: int | None = None,
         response_schema: dict | None = None,
+        tools: list[dict] | None = None,
     ) -> Chatbot:
         chatbot = Chatbot(
             organization_id=organization_id,
@@ -63,6 +64,7 @@ class ChatbotRepository:
             rag_enabled=rag_enabled,
             rag_top_k=rag_top_k,
             response_schema=response_schema,
+            tools=tools,
         )
         self.db.add(chatbot)
         return chatbot

@@ -35,6 +35,8 @@ class AIGateway:
         required = set(required_capabilities) if required_capabilities else {AICapability.TEXT_GENERATION}
         if request.response_schema is not None:
             required.add(AICapability.STRUCTURED_OUTPUT)
+        if request.tools is not None:
+            required.add(AICapability.TOOL_CALLING)
         self._validate_request(request)
 
         provider = self.providers.get(request.provider_id)
@@ -83,6 +85,8 @@ class AIGateway:
         required = {AICapability.TEXT_GENERATION, AICapability.STREAMING}
         if request.response_schema is not None:
             required.add(AICapability.STRUCTURED_OUTPUT)
+        if request.tools is not None:
+            required.add(AICapability.TOOL_CALLING)
         self._validate_request(request)
 
         provider = self.providers.get(request.provider_id)

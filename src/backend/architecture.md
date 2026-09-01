@@ -451,8 +451,8 @@ Provider API
 ### Normalized Contracts
 
 - `AIMessage`: `role` (system/user/assistant; future tool) + `content`.
-- `AIRequest`: `provider_id`, `model_id`, `messages`, `system_prompt`, `temperature`, `max_tokens`, `metadata`, `response_schema` (implemented — see "Structured Output" below). Future extension points: tools, stream, attachments, images, audio.
-- `AIResponse`: `content`, `provider_id`, `model_id`, `finish_reason`, `usage`, `metadata`.
+- `AIRequest`: `provider_id`, `model_id`, `messages`, `system_prompt`, `temperature`, `max_tokens`, `metadata`, `response_schema` (implemented — see "Structured Output" below), `tools` (implemented — see "Tool Calling (Surface-Only)" below). Future extension points: stream, attachments, images, audio.
+- `AIResponse`: `content`, `provider_id`, `model_id`, `finish_reason`, `usage`, `metadata`, `tool_calls` (implemented — see "Tool Calling (Surface-Only)" below).
 - `AIUsage`: `input_tokens`, `output_tokens`, `total_tokens`.
 - Application always receives PortableAI objects, never provider SDK response objects.
 
@@ -520,9 +520,18 @@ Responsibilities: validate request → resolve provider → resolve model → ch
 - Streaming: schema validation needs the complete response before it can be judged valid, so a structured-output chatbot's streaming turn makes a single non-streaming `AIGateway.generate` call (with the same validate/retry-once logic) internally and emits one buffered SSE `token` event with the full validated content, followed by `end` — the SSE event shape is unchanged, so the frontend needs no changes. A chatbot with `response_schema` unset keeps today's true incremental `AIGateway.stream` path exactly as before.
 - Capability registered on: the `gemini` model only, based on a documentation review, not a live API test call (no real Gemini credentials are available in this environment). Google's official docs confirm Gemini models support schema-constrained JSON output, but document that via the OpenAI SDK's `.beta.chat.completions.parse()` helper or Gemini's native `responseSchema`/`responseMimeType` field — neither page explicitly confirms the raw `response_format: {"type": "json_schema", "strict": true}` HTTP payload this adapter actually sends over the OpenAI-compatible endpoint. A non-authoritative community forum post claims that exact raw shape works, and separately notes Gemini only supports a subset of the JSON Schema specification (unsupported keywords are silently ignored). **This capability flag is an unverified assumption and should be validated against a live Gemini API call before being relied on in production.** The built-in fake providers do not carry this capability by default; tests that need a capability-bearing double register one locally, the same way other AI-gateway tests already swap in a scoped test provider.
 
+### Tool Calling (Surface-Only)
+
+- Tool definitions: `chatbots.tools` (nullable JSON), a list of `{"name", "description", "parameters"}` objects (parameters is a JSON Schema dict) — chatbot-level config, optional, mirroring `response_schema`'s precedent exactly. NULL/empty keeps today's behavior completely unchanged.
+- Capability gate: `AIGateway.generate`/`.stream` require `AICapability.TOOL_CALLING` whenever `AIRequest.tools` is non-`None` — same auto-derived mechanism as `STRUCTURED_OUTPUT`.
+- Provider adapter: the OpenAI-compatible adapter's `_build_payload` wraps each tool definition into the `{"type": "function", "function": {...}}` envelope and adds it to `payload["tools"]` when present. `_parse_response` extracts `choice["message"]["tool_calls"]` into `AIToolCall(id, name, arguments)` instances — `arguments` is stored as the raw, provider-returned JSON-encoded string, never pre-parsed or validated against the tool's declared parameter schema (unlike structured output's response validation, there is no retry loop here — a tool-call request passes through as-is).
+- Persistence: no new `MessageRole` — a tool-call request is an ordinary `ASSISTANT`-role message. `content` is a backend-constructed, human-readable summary (e.g. `Requested tool call: get_weather({"location": "Boston"})`) rather than left empty, so the existing chat bubble stays meaningful with zero frontend changes; the structured `tool_calls` data (id, name, raw arguments string) rides in the existing generic `metadata` JSON column, the same place `provider_id`/`model_id`/`finish_reason` already live.
+- Streaming: a tools-configured chatbot's streaming turn uses the same single buffered `AIGateway.generate` call inside `stream_turn()` that structured output already established, emitting one `token` + `end` SSE pair — real incremental tool-call-delta streaming (reassembling fragmented name/arguments chunks) is not implemented. A chatbot with `tools` unset keeps today's true incremental `AIGateway.stream` path exactly as before.
+- The platform never executes a tool. There is no second gateway call, no auto-continuation, and no tool-result message type — the model's tool-call request is the terminal output of that turn. `tool_choice` is not supported; the provider's default (`"auto"`) behavior applies. Server-side execution (a platform-defined allowlist of vetted functions, never arbitrary chatbot-defined endpoints reachable from model output) remains a distinct, separately-scoped future capability — not designed against here beyond this note.
+
 ### Future Extensions
 
-Tool calling, vision/multimodal, fallback providers, retries, local models, BYOK, usage tracking, provider/model administration — all planned against these contracts. Streaming and embeddings are already implemented (see §14, §18–§20).
+Vision/multimodal, fallback providers, retries, local models, BYOK, usage tracking, provider/model administration — all planned against these contracts. Streaming and embeddings are already implemented (see §14, §18–§20).
 
 ## 14. Real Provider Integration
 
@@ -1053,7 +1062,7 @@ WebSocket transport, widget per-install customization beyond the current public 
 Foundation implemented (`app/ai/`, `app/rag/`, SSE streaming, public widget). Future additions on top:
 
 - `services/agents/` — orchestration on gateway + RAG.
-- Tool calling, vision/multimodal, structured output adapters, more providers.
+- Tool execution (a platform-defined allowlist of vetted functions — tool calling itself is shipped surface-only, see §13's "Tool Calling (Surface-Only)"), vision/multimodal, more providers.
 - Chatbot entity stays provider-agnostic; provider choice is a runtime config concern.
 
 ## 28. Explicitly Out of Scope

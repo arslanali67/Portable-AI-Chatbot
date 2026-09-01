@@ -49,6 +49,10 @@ class Chatbot(Base):
     # Structured output: optional JSON schema the model's response must
     # satisfy. NULL (default) keeps today's free-text behavior unchanged.
     response_schema: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # Tool calling (surface-only): optional list of {"name", "description",
+    # "parameters"} tool definitions. NULL/empty (default) keeps today's
+    # behavior unchanged — the platform never executes a tool.
+    tools: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

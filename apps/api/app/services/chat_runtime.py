@@ -11,6 +11,13 @@ call may be made — a single retry, with the validation error fed back to
 the model as corrective feedback, if the first response doesn't validate.
 A chatbot with response_schema=NULL is completely unaffected: one gateway
 call, unchanged from pre-milestone behavior. See _generate_structured().
+
+Tool calling (chatbot.tools set) is surface-only: the platform never
+executes a tool. It's always exactly one gateway call — a tool-call
+request from the model is the terminal output of the turn, persisted as
+an ordinary ASSISTANT message (human-readable content summary; raw
+tool-call data in metadata). No second call, no auto-continuation, no
+tool-result message type.
 """
 
 import json
@@ -152,6 +159,25 @@ class ChatRuntimeService:
             return f"configured schema is invalid: {exc.message}"
         return None
 
+    @staticmethod
+    def _persisted_content_and_tool_calls(response: AIResponse) -> tuple[str, list[dict] | None]:
+        """When the model made tool call(s) instead of answering directly,
+        persisted `content` becomes a human-readable summary (so the
+        existing chat bubble stays meaningful with zero frontend changes)
+        and the raw tool-call data (id, name, unparsed arguments string) is
+        returned separately for the message's metadata column. Otherwise
+        content passes through unchanged and there's no tool-call metadata."""
+        if not response.tool_calls:
+            return response.content, None
+        summary = "; ".join(
+            f"Requested tool call: {tc.name}({tc.arguments})" for tc in response.tool_calls
+        )
+        tool_calls_meta = [
+            {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+            for tc in response.tool_calls
+        ]
+        return summary, tool_calls_meta
+
     async def chat(
         self,
         user: User,
@@ -193,6 +219,8 @@ class ChatRuntimeService:
             retrieved=retrieved,
             latest_user_content=payload.content,
         )
+        if chatbot.tools:
+            request = replace(request, tools=chatbot.tools)
 
         # 3. Call AI outside the DB transaction.
         try:
@@ -227,17 +255,21 @@ class ChatRuntimeService:
             raise RuntimeErrorAI(500, "AI processing failed") from exc
 
         # 4. Save assistant message, commit.
+        content, tool_calls_meta = self._persisted_content_and_tool_calls(response)
+        message_metadata = {
+            "provider_id": response.provider_id,
+            "model_id": response.model_id,
+            "finish_reason": response.finish_reason,
+        }
+        if tool_calls_meta is not None:
+            message_metadata["tool_calls"] = tool_calls_meta
         assistant_sequence = (await self.messages.get_latest_sequence(conversation_id)) + 1
         assistant_message = await self.messages.create(
             conversation_id=conversation_id,
             role=MessageRole.ASSISTANT,
-            content=response.content,
+            content=content,
             sequence_number=assistant_sequence,
-            metadata={
-                "provider_id": response.provider_id,
-                "model_id": response.model_id,
-                "finish_reason": response.finish_reason,
-            },
+            metadata=message_metadata,
         )
         await self.messages.db.commit()
         await self.messages.db.refresh(assistant_message)
@@ -298,11 +330,14 @@ class ChatRuntimeService:
             retrieved=retrieved,
             latest_user_content=payload.content,
         )
+        if chatbot.tools:
+            request = replace(request, tools=chatbot.tools)
 
         # 3. Stream via gateway, assemble final content.
         yield ("start", {"provider_id": request.provider_id, "model_id": request.model_id})
         chunks: list[str] = []
         finish_reason = "stop"
+        turn_tool_calls_meta: list[dict] | None = None
         try:
             overrides = AIProviderOverrideService(self.messages.db)
             if await overrides.is_provider_disabled(chatbot.provider_id):
@@ -315,19 +350,29 @@ class ChatRuntimeService:
                 self.messages.db, provider_registry, model_registry
             )
             byok_key = await credentials.resolve_decrypted(organization_id, chatbot.provider_id)
-            if chatbot.response_schema is not None:
-                # Schema validation needs the complete response before it can
-                # be judged valid — a structured-output chatbot gets a single
-                # buffered "token" event with the full (validated) content
-                # instead of true incremental streaming. The SSE event shape
-                # (token, then end) is unchanged, so the frontend needs no
-                # changes either way.
-                structured_response = await self._generate_structured(
-                    request, chatbot.response_schema, byok_key
+            if chatbot.response_schema is not None or chatbot.tools:
+                # Both structured output (schema validation needs the
+                # complete response before it can be judged valid) and tool
+                # calling (a tool-call request only exists once the response
+                # is fully assembled) share the same buffered fallback: a
+                # single non-streaming AIGateway.generate call, emitting one
+                # "token" + "end" SSE pair instead of true incremental
+                # streaming. The SSE event shape is unchanged either way, so
+                # the frontend needs no changes.
+                if chatbot.response_schema is not None:
+                    buffered_response = await self._generate_structured(
+                        request, chatbot.response_schema, byok_key
+                    )
+                else:
+                    buffered_response = await gateway.generate(
+                        request, credential_override=byok_key
+                    )
+                content, turn_tool_calls_meta = self._persisted_content_and_tool_calls(
+                    buffered_response
                 )
-                chunks.append(structured_response.content)
-                yield ("token", {"delta": structured_response.content})
-                finish_reason = structured_response.finish_reason
+                chunks.append(content)
+                yield ("token", {"delta": content})
+                finish_reason = buffered_response.finish_reason
             else:
                 async for event in gateway.stream(request, credential_override=byok_key):
                     if event.type.value == "token":
@@ -350,17 +395,20 @@ class ChatRuntimeService:
             raise RuntimeErrorAI(500, "AI processing failed") from exc
 
         # 4. Persist ONE assistant message.
+        stream_metadata = {
+            "provider_id": request.provider_id,
+            "model_id": request.model_id,
+            "finish_reason": finish_reason,
+        }
+        if turn_tool_calls_meta is not None:
+            stream_metadata["tool_calls"] = turn_tool_calls_meta
         assistant_sequence = (await self.messages.get_latest_sequence(conversation_id)) + 1
         assistant_message = await self.messages.create(
             conversation_id=conversation_id,
             role=MessageRole.ASSISTANT,
             content="".join(chunks),
             sequence_number=assistant_sequence,
-            metadata={
-                "provider_id": request.provider_id,
-                "model_id": request.model_id,
-                "finish_reason": finish_reason,
-            },
+            metadata=stream_metadata,
         )
         await self.messages.db.commit()
         await self.messages.db.refresh(assistant_message)

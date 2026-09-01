@@ -34,6 +34,7 @@ class ChatbotCreate(BaseModel):
     rag_enabled: bool = True
     rag_top_k: int | None = Field(default=None, ge=1, le=20)
     response_schema: dict | None = None
+    tools: list[dict] | None = None
 
     @field_validator("language")
     @classmethod
@@ -60,6 +61,7 @@ class ChatbotUpdate(BaseModel):
     rag_enabled: bool | None = None
     rag_top_k: int | None = Field(default=None, ge=1, le=20)
     response_schema: dict | None = None
+    tools: list[dict] | None = None
 
     @field_validator("language")
     @classmethod
@@ -89,5 +91,6 @@ class ChatbotResponse(BaseModel):
     rag_enabled: bool
     rag_top_k: int | None
     response_schema: dict | None
+    tools: list[dict] | None
     created_at: datetime
     updated_at: datetime

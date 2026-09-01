@@ -10,7 +10,7 @@ from typing import AsyncGenerator
 
 import httpx
 
-from app.ai.contracts import AIRequest, AIResponse, AIUsage
+from app.ai.contracts import AIRequest, AIResponse, AIToolCall, AIUsage
 from app.ai.exceptions import (
     AIAuthenticationError,
     AIInvalidRequestError,
@@ -149,6 +149,18 @@ class OpenAICompatibleHTTPProvider(OpenAICompatibleProvider):
                     "schema": request.response_schema,
                 },
             }
+        if request.tools is not None:
+            payload["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool["name"],
+                        "description": tool.get("description", ""),
+                        "parameters": tool["parameters"],
+                    },
+                }
+                for tool in request.tools
+            ]
         # metadata is intentionally not sent to the provider.
         return payload
 
@@ -178,8 +190,22 @@ class OpenAICompatibleHTTPProvider(OpenAICompatibleProvider):
 
         try:
             choice = data["choices"][0]
-            content = choice.get("message", {}).get("content") or ""
+            message = choice.get("message", {})
+            content = message.get("content") or ""
             finish_reason = choice.get("finish_reason") or "stop"
+            raw_tool_calls = message.get("tool_calls")
+            tool_calls = (
+                [
+                    AIToolCall(
+                        id=tc["id"],
+                        name=tc["function"]["name"],
+                        arguments=tc["function"]["arguments"],
+                    )
+                    for tc in raw_tool_calls
+                ]
+                if raw_tool_calls
+                else None
+            )
         except (KeyError, IndexError, TypeError) as exc:
             raise AIProviderError("malformed provider response") from exc
 
@@ -196,4 +222,5 @@ class OpenAICompatibleHTTPProvider(OpenAICompatibleProvider):
             finish_reason=finish_reason,
             usage=usage,
             metadata={},
+            tool_calls=tool_calls,
         )

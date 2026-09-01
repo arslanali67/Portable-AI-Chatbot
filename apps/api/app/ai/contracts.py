@@ -42,6 +42,14 @@ class AIRequest:
     max_tokens: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     response_schema: dict[str, Any] | None = None
+    tools: list[dict[str, Any]] | None = None
+
+
+@dataclass(frozen=True)
+class AIToolCall:
+    id: str
+    name: str
+    arguments: str  # raw, provider-returned JSON-encoded string — not parsed
 
 
 @dataclass(frozen=True)
@@ -52,3 +60,4 @@ class AIResponse:
     finish_reason: str
     usage: AIUsage
     metadata: dict[str, Any] = field(default_factory=dict)
+    tool_calls: list[AIToolCall] | None = None

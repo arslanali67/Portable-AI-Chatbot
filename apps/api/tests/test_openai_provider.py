@@ -133,6 +133,52 @@ async def test_no_system_prompt_when_none() -> None:
     assert all(m["role"] != "system" for m in payload["messages"])
 
 
+@pytest.mark.asyncio
+async def test_payload_omits_tools_when_absent() -> None:
+    t = _transport()
+    provider = _provider(AsyncClient(transport=t))
+    await provider.generate(_request())
+    import json
+
+    payload = json.loads(t.requests[0].content)
+    assert "tools" not in payload
+
+
+@pytest.mark.asyncio
+async def test_payload_wraps_tools_in_openai_function_shape_when_present() -> None:
+    t = _transport()
+    provider = _provider(AsyncClient(transport=t))
+    tools = [
+        {
+            "name": "get_weather",
+            "description": "Get current weather",
+            "parameters": {
+                "type": "object",
+                "properties": {"location": {"type": "string"}},
+                "required": ["location"],
+            },
+        }
+    ]
+    await provider.generate(_request(tools=tools))
+    import json
+
+    payload = json.loads(t.requests[0].content)
+    assert payload["tools"] == [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Get current weather",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"location": {"type": "string"}},
+                    "required": ["location"],
+                },
+            },
+        }
+    ]
+
+
 # --- Response normalization ---
 
 
@@ -146,6 +192,7 @@ async def test_response_parsing() -> None:
     assert response.usage.input_tokens == 15
     assert response.usage.output_tokens == 5
     assert response.usage.total_tokens == 20
+    assert response.tool_calls is None
 
 
 @pytest.mark.asyncio
@@ -159,6 +206,55 @@ async def test_missing_content_defaults_empty() -> None:
     _, response = await _generate(t)
     assert response.content == ""
     assert response.usage.total_tokens == 0
+
+
+@pytest.mark.asyncio
+async def test_tool_calls_extracted_from_response() -> None:
+    """Closes the exact latent gap flagged during the structured-output
+    milestone: a real tool_calls-bearing response is no longer silently
+    dropped into an empty-content message."""
+    t = _transport(
+        Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_abc123",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "get_weather",
+                                        "arguments": '{"location": "Boston"}',
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 4},
+            },
+        )
+    )
+    _, response = await _generate(t)
+    assert response.content == ""
+    assert response.finish_reason == "tool_calls"
+    assert response.tool_calls is not None
+    assert len(response.tool_calls) == 1
+    call = response.tool_calls[0]
+    assert call.id == "call_abc123"
+    assert call.name == "get_weather"
+    assert call.arguments == '{"location": "Boston"}'  # raw string, not parsed
+
+
+@pytest.mark.asyncio
+async def test_no_tool_calls_key_leaves_tool_calls_none() -> None:
+    t = _transport(_ok_response())
+    _, response = await _generate(t)
+    assert response.tool_calls is None
 
 
 # --- Error mapping ---
@@ -266,6 +362,7 @@ async def test_raw_provider_response_does_not_escape() -> None:
         "finish_reason",
         "usage",
         "metadata",
+        "tool_calls",
     }
 
 

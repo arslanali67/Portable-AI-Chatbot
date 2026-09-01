@@ -70,6 +70,7 @@ const BOT_DRAFT: Chatbot = {
   rag_enabled: true,
   rag_top_k: null,
   response_schema: null,
+  tools: null,
   created_at: "2026-08-01T10:00:00Z",
   updated_at: "2026-08-01T10:00:00Z",
 };
@@ -524,6 +525,103 @@ describe("ChatbotsPage", () => {
       "Response JSON schema (blank = free-text response)",
     ) as HTMLTextAreaElement;
     expect(JSON.parse(field.value)).toEqual({ type: "object", required: ["x"] });
+  });
+
+  it("submits a parsed tools array on create", async () => {
+    route({ listBots: jsonResponse(200, []) });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("No chatbots yet. Create one to configure a chatbot.");
+
+    await user.click(screen.getByRole("button", { name: "New chatbot" }));
+    await screen.findByRole("option", { name: "Small A" });
+
+    await user.type(screen.getByLabelText("Name"), "Tool Bot");
+    await user.type(screen.getByLabelText("Slug"), "tool-bot");
+    await user.selectOptions(screen.getByLabelText("Model"), "fake-model-small");
+    fireEvent.change(
+      screen.getByLabelText("Tool definitions (JSON array, blank = no tools)"),
+      {
+        target: {
+          value: '[{"name": "get_weather", "description": "d", "parameters": {"type": "object"}}]',
+        },
+      },
+    );
+
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(calls("POST", /\/chatbots$/)).toHaveLength(1));
+    const [, init] = calls("POST", /\/chatbots$/)[0];
+    expect(JSON.parse(String(init?.body)).tools).toEqual([
+      { name: "get_weather", description: "d", parameters: { type: "object" } },
+    ]);
+  });
+
+  it("submits tools as null when left blank", async () => {
+    route({ listBots: jsonResponse(200, []) });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("No chatbots yet. Create one to configure a chatbot.");
+
+    await user.click(screen.getByRole("button", { name: "New chatbot" }));
+    await screen.findByRole("option", { name: "Small A" });
+
+    await user.type(screen.getByLabelText("Name"), "No Tools Bot");
+    await user.type(screen.getByLabelText("Slug"), "no-tools-bot");
+    await user.selectOptions(screen.getByLabelText("Model"), "fake-model-small");
+
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(calls("POST", /\/chatbots$/)).toHaveLength(1));
+    const [, init] = calls("POST", /\/chatbots$/)[0];
+    expect(JSON.parse(String(init?.body)).tools).toBeNull();
+  });
+
+  it("rejects invalid JSON in the tool definitions field before submitting", async () => {
+    route({ listBots: jsonResponse(200, []) });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("No chatbots yet. Create one to configure a chatbot.");
+
+    await user.click(screen.getByRole("button", { name: "New chatbot" }));
+    await screen.findByRole("option", { name: "Small A" });
+
+    await user.type(screen.getByLabelText("Name"), "Bad Tools Bot");
+    await user.type(screen.getByLabelText("Slug"), "bad-tools-bot");
+    await user.selectOptions(screen.getByLabelText("Model"), "fake-model-small");
+    fireEvent.change(
+      screen.getByLabelText("Tool definitions (JSON array, blank = no tools)"),
+      { target: { value: "[not valid json" } },
+    );
+
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await screen.findByText("Tool definitions must be valid JSON.");
+    expect(calls("POST", /\/chatbots$/)).toHaveLength(0);
+  });
+
+  it("loads an existing chatbot's tools into the edit form", async () => {
+    route({
+      listBots: jsonResponse(200, [
+        { ...BOT_DRAFT, tools: [{ name: "get_weather", description: "d", parameters: {} }] },
+      ]),
+    });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("Draft Bot");
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    const field = screen.getByLabelText(
+      "Tool definitions (JSON array, blank = no tools)",
+    ) as HTMLTextAreaElement;
+    expect(JSON.parse(field.value)).toEqual([
+      { name: "get_weather", description: "d", parameters: {} },
+    ]);
   });
 
   it("enforces the 1-20 bound on the RAG top_k input", async () => {
