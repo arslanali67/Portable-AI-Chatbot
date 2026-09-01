@@ -1,4 +1,5 @@
 from app.models.ai_model_override import AIModelOverride
+from app.models.ai_provider_credential import AIProviderCredential
 from app.models.ai_provider_override import AIProviderOverride
 from app.models.chatbot import Chatbot
 from app.models.conversation import Conversation
@@ -15,6 +16,7 @@ from app.models.widget_session import WidgetSession
 
 __all__ = [
     "AIModelOverride",
+    "AIProviderCredential",
     "AIProviderOverride",
     "Chatbot",
     "Conversation",

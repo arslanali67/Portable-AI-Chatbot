@@ -16,7 +16,9 @@ class FakeAIProvider:
         self.metadata = metadata
         self.label = label
 
-    async def generate(self, request: AIRequest) -> AIResponse:
+    async def generate(
+        self, request: AIRequest, credential_override: str | None = None
+    ) -> AIResponse:
         content = self._full_content(request)
         return AIResponse(
             content=content,
@@ -27,7 +29,9 @@ class FakeAIProvider:
             metadata={"fake": True, "label": self.label},
         )
 
-    def stream(self, request: AIRequest) -> AsyncGenerator[AIStreamEvent, None]:
+    def stream(
+        self, request: AIRequest, credential_override: str | None = None
+    ) -> AsyncGenerator[AIStreamEvent, None]:
         content = self._full_content(request)
 
         async def _gen() -> AsyncGenerator[AIStreamEvent, None]:

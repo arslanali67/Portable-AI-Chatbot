@@ -1,4 +1,5 @@
 import type {
+  AICredentialStatus,
   ApiError,
   Chatbot,
   ChatbotCreate,
@@ -345,6 +346,22 @@ export const api = {
     return request<ModelInfo>(`/api/v1/ai/providers/${providerId}/models/${modelId}`, {
       method: "PATCH",
       ...jsonBody(data),
+    });
+  },
+
+  // BYOK AI provider credentials (organization-scoped, admin+)
+  listAiCredentials(orgId: number): Promise<AICredentialStatus[]> {
+    return request<AICredentialStatus[]>(`/api/v1/organizations/${orgId}/ai-credentials`);
+  },
+  setAiCredential(orgId: number, providerId: string, apiKey: string): Promise<AICredentialStatus> {
+    return request<AICredentialStatus>(
+      `/api/v1/organizations/${orgId}/ai-credentials/${providerId}`,
+      { method: "PUT", ...jsonBody({ api_key: apiKey }) },
+    );
+  },
+  removeAiCredential(orgId: number, providerId: string): Promise<void> {
+    return request<void>(`/api/v1/organizations/${orgId}/ai-credentials/${providerId}`, {
+      method: "DELETE",
     });
   },
 

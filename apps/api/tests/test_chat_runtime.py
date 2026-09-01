@@ -413,9 +413,11 @@ class CapturingFakeProvider:
     def __init__(self, metadata):
         self.metadata = metadata
         self.last_request = None
+        self.last_credential_override = None
 
-    async def generate(self, request):
+    async def generate(self, request, credential_override=None):
         self.last_request = request
+        self.last_credential_override = credential_override
         from app.ai.contracts import AIResponse, AIUsage
 
         return AIResponse(
@@ -813,5 +815,86 @@ def test_chat_blocked_when_provider_disabled_by_admin_after_chatbot_created() ->
         )
 
     # Re-enabled: execution works again.
+    ok = _chat(token, org_id, conv_id)
+    assert ok.status_code == 200, ok.text
+
+
+# --- BYOK credential resolution ---
+
+
+def test_byok_credential_used_then_removed_falls_back() -> None:
+    """Spy proof (not just response shape): the gateway receives the org's
+    BYOK credential when set, and None (platform fallback) both before it is
+    set and after it is removed."""
+    gateway, op, om, capture = _capture_gateway()
+    try:
+        _, token, org_id, bot_id, _ = _setup()
+
+        conv1 = _create_conv(token, org_id, bot_id)
+        assert _chat(token, org_id, conv1, "hello").status_code == 200
+        assert capture.last_credential_override is None
+
+        set_r = client.put(
+            f"/api/v1/organizations/{org_id}/ai-credentials/fake-a",
+            json={"api_key": "byok-secret-999"},
+            headers=_auth(token),
+        )
+        assert set_r.status_code == 200, set_r.text
+
+        conv2 = _create_conv(token, org_id, bot_id)
+        assert _chat(token, org_id, conv2, "hello again").status_code == 200
+        assert capture.last_credential_override == "byok-secret-999"
+
+        del_r = client.delete(
+            f"/api/v1/organizations/{org_id}/ai-credentials/fake-a", headers=_auth(token)
+        )
+        assert del_r.status_code == 204
+
+        conv3 = _create_conv(token, org_id, bot_id)
+        assert _chat(token, org_id, conv3, "hello third").status_code == 200
+        assert capture.last_credential_override is None
+    finally:
+        gateway.providers, gateway.models = op, om
+
+
+def test_byok_does_not_bypass_m5_disabled_provider() -> None:
+    """BYOK changes which credential is used, never whether the provider is
+    available — a platform-admin disable still blocks execution even with a
+    BYOK credential set for that provider."""
+    email = _email(f"admin{uuid.uuid4().hex[:6]}")
+    user = _register(email)
+    asyncio.run(_promote_platform_admin(user["id"]))
+    token = _login(email)
+
+    org_id = _create_org(token, "Org", _slug(f"org{uuid.uuid4().hex[:6]}"))
+    bot_id = _create_bot(
+        token,
+        org_id,
+        _slug(f"bot{uuid.uuid4().hex[:6]}"),
+        provider_id="fake-b",
+        model_id="fake-model-small",
+    )
+    conv_id = _create_conv(token, org_id, bot_id)
+
+    set_r = client.put(
+        f"/api/v1/organizations/{org_id}/ai-credentials/fake-b",
+        json={"api_key": "byok-secret-000"},
+        headers=_auth(token),
+    )
+    assert set_r.status_code == 200, set_r.text
+
+    try:
+        r = client.patch(
+            "/api/v1/ai/providers/fake-b", json={"disabled": True}, headers=_auth(token)
+        )
+        assert r.status_code == 200, r.text
+
+        blocked = _chat(token, org_id, conv_id)
+        assert blocked.status_code == 502, blocked.text
+    finally:
+        client.patch(
+            "/api/v1/ai/providers/fake-b", json={"disabled": False}, headers=_auth(token)
+        )
+
     ok = _chat(token, org_id, conv_id)
     assert ok.status_code == 200, ok.text

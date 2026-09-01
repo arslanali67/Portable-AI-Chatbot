@@ -40,6 +40,13 @@ class Settings(BaseSettings):
         description="Async SQLAlchemy database URL, e.g. postgresql+asyncpg://user:pass@host:5432/portableai",
     )
 
+    # BYOK AI provider credential encryption — required, environment-only,
+    # never stored in the DB. No rotation mechanism in this MVP: losing this
+    # key makes every stored credential permanently undecryptable.
+    ai_credential_encryption_key: str = Field(
+        ..., description="Fernet key for encrypting stored AI provider credentials"
+    )
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
     # "memory" (default, no infra required) | "redis" (multi-instance safe,

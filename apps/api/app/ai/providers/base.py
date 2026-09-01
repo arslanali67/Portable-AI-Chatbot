@@ -14,9 +14,13 @@ from app.ai.streaming import AIStreamEvent
 class AIProvider(Protocol):
     metadata: ProviderMetadata
 
-    async def generate(self, request: AIRequest) -> AIResponse: ...
+    async def generate(
+        self, request: AIRequest, credential_override: str | None = None
+    ) -> AIResponse: ...
 
-    def stream(self, request: AIRequest) -> AsyncGenerator[AIStreamEvent, None]: ...
+    def stream(
+        self, request: AIRequest, credential_override: str | None = None
+    ) -> AsyncGenerator[AIStreamEvent, None]: ...
 
 
 class OpenAICompatibleProvider:
@@ -29,5 +33,7 @@ class OpenAICompatibleProvider:
     def __init__(self, metadata: ProviderMetadata) -> None:
         self.metadata = metadata
 
-    async def generate(self, request: AIRequest) -> AIResponse:  # pragma: no cover
+    async def generate(
+        self, request: AIRequest, credential_override: str | None = None
+    ) -> AIResponse:  # pragma: no cover
         raise NotImplementedError("subclass must implement generate")

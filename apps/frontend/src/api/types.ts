@@ -135,6 +135,13 @@ export interface DisabledUpdate {
   disabled: boolean;
 }
 
+export interface AICredentialStatus {
+  provider_id: string;
+  masked_key: string;
+  updated_at: string;
+  updated_by_email: string | null;
+}
+
 export type SourceType = "text" | "file" | "url";
 
 export interface KnowledgeDocument {

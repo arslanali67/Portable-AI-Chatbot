@@ -40,6 +40,7 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://portableai:portableai@localhost:5432/portableai
       JWT_SECRET: dev-secret-change-me-0123456789abcdef
       REDIS_URL: redis://localhost:6379/0
+      AI_CREDENTIAL_ENCRYPTION_KEY: ZPhpiYGtIpjHg-rGpPCJjzEisONSFw3f-2M3nCH3I8I=
     services:
       postgres:
         image: pgvector/pgvector:pg16

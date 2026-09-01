@@ -496,13 +496,14 @@ Responsibilities: validate request → resolve provider → resolve model → ch
 ### Credential Isolation
 
 - Provider API keys are never stored in chatbots, organizations, provider metadata, model metadata, JWT, logs, or source code.
-- Credential management is not implemented yet. Future flow:
-
-```text
-AI Gateway → Credential Provider → Secure Secret Storage → Provider Adapter
-```
-
-- Future credential scopes: platform credentials, organization credentials, BYOK.
+- BYOK (bring-your-own-key): `ai_provider_credentials` stores an organization-scoped, Fernet-encrypted API key per (organization, provider_id) — `provider_id` matches the code registry's `provider_id` but is a plain string, not a DB FK, since providers stay code-registered. Unique on `(organization_id, provider_id)`.
+- Encryption: `cryptography`'s Fernet, keyed by `AI_CREDENTIAL_ENCRYPTION_KEY` (required, environment-only, fail-fast at startup if missing — never stored in the DB). Known MVP limitation: there is no key-rotation mechanism; losing the encryption key makes every stored credential permanently undecryptable.
+- Resolution seam: `AIProvider.generate`/`.stream` and `AIGateway.generate`/`.stream` take an optional `credential_override: str | None = None` (default `None`, every existing call site unchanged). `ChatRuntimeService` resolves an org's BYOK credential via `AIProviderCredentialService` at both existing gateway call sites (next to the M5 enable/disable override check), decrypts it just-in-time, and passes it through — plaintext is never held longer than that single call, never logged. Absent a BYOK credential, the platform-shared environment credential is used, unchanged from today's behavior.
+- Save-time validation: setting a credential makes a minimal live test call against the provider before it is ever encrypted or stored; a failing call is rejected with a 4xx and nothing is persisted.
+- Admin UI is write-only: the actual key is never re-displayed, only a masked last-4 indicator (e.g. `••••••••1234`) plus who last updated it and when.
+- BYOK is orthogonal to the M5 provider/model enable/disable override: BYOK changes which credential is used for an already-available provider/model, never whether it is available — a disabled provider/model stays unavailable regardless of BYOK.
+- Permission: ADMIN+ (owner/admin), matching existing org-level sensitive-mutation precedent (widget-config, chatbot creation).
+- Explicitly out of scope: per-user keys, rotation reminders/expiry, multiple keys per provider, usage/cost attribution by key.
 
 ### Chatbot AI Configuration
 
@@ -1043,7 +1044,6 @@ WebSocket transport, widget per-install customization beyond the current public 
 Foundation implemented (`app/ai/`, `app/rag/`, SSE streaming, public widget). Future additions on top:
 
 - `services/agents/` — orchestration on gateway + RAG.
-- Credential provider + secure secret storage + BYOK.
 - Tool calling, vision/multimodal, structured output adapters, more providers.
 - Chatbot entity stays provider-agnostic; provider choice is a runtime config concern.
 

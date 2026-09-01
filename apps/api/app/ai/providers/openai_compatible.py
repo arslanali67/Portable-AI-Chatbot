@@ -41,10 +41,12 @@ class OpenAICompatibleHTTPProvider(OpenAICompatibleProvider):
         # Injectable client for tests; otherwise a client with explicit timeout.
         self._client = client or httpx.AsyncClient(timeout=timeout)
 
-    async def generate(self, request: AIRequest) -> AIResponse:
+    async def generate(
+        self, request: AIRequest, credential_override: str | None = None
+    ) -> AIResponse:
         payload = self._build_payload(request)
         headers = {
-            "Authorization": f"Bearer {self._api_key}",
+            "Authorization": f"Bearer {credential_override or self._api_key}",
             "Content-Type": "application/json",
         }
         try:
@@ -61,11 +63,13 @@ class OpenAICompatibleHTTPProvider(OpenAICompatibleProvider):
         self._raise_for_status(response)
         return self._parse_response(request, response)
 
-    def stream(self, request: AIRequest) -> AsyncGenerator[AIStreamEvent, None]:
+    def stream(
+        self, request: AIRequest, credential_override: str | None = None
+    ) -> AsyncGenerator[AIStreamEvent, None]:
         payload = self._build_payload(request)
         payload["stream"] = True
         headers = {
-            "Authorization": f"Bearer {self._api_key}",
+            "Authorization": f"Bearer {credential_override or self._api_key}",
             "Content-Type": "application/json",
         }
 

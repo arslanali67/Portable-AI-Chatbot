@@ -130,6 +130,7 @@ def test_production_config_fails_fast_on_weak_secret() -> None:
             cors_origins=["http://localhost:3000"],
             trusted_hosts=["portableai.example.com"],
             debug=False,
+            ai_credential_encryption_key="test-key",
         )
 
 
@@ -142,6 +143,7 @@ def test_production_config_fails_fast_without_trusted_hosts() -> None:
             cors_origins=["http://localhost:3000"],
             trusted_hosts=[],
             debug=False,
+            ai_credential_encryption_key="test-key",
         )
 
 
@@ -154,6 +156,7 @@ def test_production_config_fails_fast_with_debug() -> None:
             cors_origins=["http://localhost:3000"],
             trusted_hosts=["portableai.example.com"],
             debug=True,
+            ai_credential_encryption_key="test-key",
         )
 
 
@@ -162,13 +165,19 @@ def test_development_config_allows_dev_secret() -> None:
         environment="development",
         jwt_secret=DEV_JWT_SECRET,
         database_url="postgresql+asyncpg://u:p@h:5432/d",
+        ai_credential_encryption_key="test-key",
     )
     assert dev.is_production is False
 
 
 def test_invalid_environment_rejected() -> None:
     with pytest.raises(ValueError):
-        Settings(environment="staging", jwt_secret="x", database_url="x")
+        Settings(
+            environment="staging",
+            jwt_secret="x",
+            database_url="x",
+            ai_credential_encryption_key="test-key",
+        )
 
 
 def test_widget_config_revoke_persists() -> None:

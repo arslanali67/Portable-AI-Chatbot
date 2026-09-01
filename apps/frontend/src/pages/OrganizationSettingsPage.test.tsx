@@ -4,7 +4,7 @@
 // is mocked at the global boundary; AuthProvider is real (the page reads the
 // current user via useAuth() to identify the viewer's own row).
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -13,7 +13,7 @@ import OrganizationSettingsPage from "./OrganizationSettingsPage";
 import { AuthProvider } from "../auth/AuthContext";
 import { setToken } from "../api/client";
 import { jsonResponse } from "../test/helpers";
-import type { Membership, Organization } from "../api/types";
+import type { AICredentialStatus, Membership, Organization, Provider } from "../api/types";
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -53,6 +53,16 @@ const BOB_MEMBERSHIP: Membership = {
   user_full_name: "Bob Member",
 };
 
+const GEMINI_PROVIDER: Provider = {
+  provider_id: "gemini",
+  display_name: "Google Gemini",
+  description: "Gemini via OpenAI-compatible API",
+  enabled: true,
+  authentication_type: "api_key",
+  compatibility_type: "openai_compatible",
+  capabilities: ["text_generation"],
+};
+
 interface RouteOverrides {
   org?: Response;
   members?: Response;
@@ -61,6 +71,10 @@ interface RouteOverrides {
   addMember?: Response;
   patchMember?: Response;
   deleteMember?: Response;
+  providers?: Response;
+  credentials?: Response;
+  putCredential?: Response;
+  deleteCredential?: Response;
 }
 
 function route(overrides: RouteOverrides = {}) {
@@ -91,6 +105,26 @@ function route(overrides: RouteOverrides = {}) {
         );
       }
       return overrides.members ?? jsonResponse(200, [OWNER_MEMBERSHIP, BOB_MEMBERSHIP]);
+    }
+    if (path.endsWith("/api/v1/ai/providers")) {
+      return overrides.providers ?? jsonResponse(200, [GEMINI_PROVIDER]);
+    }
+    if (/\/ai-credentials\/[^/]+$/.test(path)) {
+      if (method === "PUT") {
+        return (
+          overrides.putCredential ??
+          jsonResponse(200, {
+            provider_id: "gemini",
+            masked_key: "••••••••7890",
+            updated_at: "2026-01-01T00:00:00Z",
+            updated_by_email: "owner@example.com",
+          })
+        );
+      }
+      if (method === "DELETE") return overrides.deleteCredential ?? jsonResponse(204, null);
+    }
+    if (path.endsWith("/ai-credentials")) {
+      return overrides.credentials ?? jsonResponse(200, []);
     }
     if (/\/organizations\/4590$/.test(path)) {
       if (method === "PATCH") return overrides.patchOrg ?? jsonResponse(200, { ...ORG, name: "Renamed Acme" });
@@ -464,5 +498,120 @@ describe("OrganizationSettingsPage", () => {
     expect(confirmSpy).toHaveBeenCalledWith("Leave this organization? You will lose access immediately.");
     await screen.findByText("Organizations list page");
     expect(calls("DELETE", /\/members\/1$/)).toHaveLength(1);
+  });
+
+  describe("BYOK AI provider keys", () => {
+    function byokPanel(): HTMLElement {
+      return screen.getByText("AI Provider Keys (BYOK)").closest(".panel") as HTMLElement;
+    }
+
+    it("shows the platform-shared fallback state when no credential is set", async () => {
+      route();
+
+      renderPage();
+      await screen.findByText("Acme");
+
+      await screen.findByText("Google Gemini");
+      const panel = within(byokPanel());
+      expect(panel.getByText("Using platform-shared key")).toBeInTheDocument();
+      expect(panel.getByPlaceholderText("API key")).toBeInTheDocument();
+      expect(panel.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+    });
+
+    it("shows the masked key and metadata when a credential is already set", async () => {
+      const cred: AICredentialStatus = {
+        provider_id: "gemini",
+        masked_key: "••••••••1234",
+        updated_at: "2026-01-01T00:00:00Z",
+        updated_by_email: "owner@example.com",
+      };
+      route({ credentials: jsonResponse(200, [cred]) });
+
+      renderPage();
+      await screen.findByText("Acme");
+
+      await screen.findByText(/••••••••1234/);
+      const panel = within(byokPanel());
+      expect(panel.getByText(/updated by owner@example.com/)).toBeInTheDocument();
+      expect(panel.getByRole("button", { name: "Replace" })).toBeInTheDocument();
+      expect(panel.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+    });
+
+    it("sets a credential and displays the masked result", async () => {
+      route();
+      const user = userEvent.setup();
+
+      renderPage();
+      await screen.findByText("Acme");
+      await screen.findByText("Google Gemini");
+
+      await user.type(screen.getByPlaceholderText("API key"), "sk-real-secret-7890");
+      await user.click(screen.getByRole("button", { name: "Set key" }));
+
+      await screen.findByText(/••••••••7890/);
+      const [, init] = calls("PUT", /\/ai-credentials\/gemini$/)[0];
+      expect(JSON.parse(String(init?.body))).toEqual({ api_key: "sk-real-secret-7890" });
+      // The raw key is never left sitting in the input.
+      expect(screen.getByPlaceholderText("New API key to replace")).toHaveValue("");
+    });
+
+    it("shows a validation error and persists nothing on save failure", async () => {
+      route({
+        putCredential: jsonResponse(422, { detail: "Credential validation failed: invalid key" }),
+      });
+      const user = userEvent.setup();
+
+      renderPage();
+      await screen.findByText("Acme");
+      await screen.findByText("Google Gemini");
+
+      await user.type(screen.getByPlaceholderText("API key"), "bad-key");
+      await user.click(screen.getByRole("button", { name: "Set key" }));
+
+      await screen.findByText("Credential validation failed: invalid key");
+      expect(screen.getByText("Using platform-shared key")).toBeInTheDocument();
+    });
+
+    it("removes a credential after confirmation", async () => {
+      const cred: AICredentialStatus = {
+        provider_id: "gemini",
+        masked_key: "••••••••1234",
+        updated_at: "2026-01-01T00:00:00Z",
+        updated_by_email: "owner@example.com",
+      };
+      route({ credentials: jsonResponse(200, [cred]) });
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      const user = userEvent.setup();
+
+      renderPage();
+      await screen.findByText("Acme");
+      await screen.findByText(/••••••••1234/);
+
+      await user.click(within(byokPanel()).getByRole("button", { name: "Remove" }));
+
+      await waitFor(() => expect(calls("DELETE", /\/ai-credentials\/gemini$/)).toHaveLength(1));
+      await waitFor(() =>
+        expect(screen.getByText("Using platform-shared key")).toBeInTheDocument(),
+      );
+    });
+
+    it("does not fetch BYOK credentials for a non-admin member", async () => {
+      const memberOnly = { ...VIEWER, id: 99 };
+      fetchMock.mockImplementation(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path.endsWith("/api/v1/auth/me")) return jsonResponse(200, memberOnly);
+        if (path.endsWith("/members")) return jsonResponse(200, [OWNER_MEMBERSHIP, BOB_MEMBERSHIP]);
+        if (/\/organizations\/4590$/.test(path) && method === "GET") return jsonResponse(200, ORG);
+        return jsonResponse(404, { detail: "Not found" });
+      });
+
+      renderPage();
+      await screen.findByText("Acme");
+
+      expect(screen.queryByText("AI Provider Keys (BYOK)")).not.toBeInTheDocument();
+      expect(calls("GET", /\/ai-credentials$/)).toHaveLength(0);
+      expect(calls("GET", /\/ai\/providers$/)).toHaveLength(0);
+    });
   });
 });

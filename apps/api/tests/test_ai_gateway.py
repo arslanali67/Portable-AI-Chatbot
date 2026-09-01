@@ -262,7 +262,7 @@ def test_fake_provider_multiple_models() -> None:
 
 
 class KimiProvider(OpenAICompatibleProvider):
-    async def generate(self, request: AIRequest):
+    async def generate(self, request: AIRequest, credential_override: str | None = None):
         last_user = next(
             (m.content for m in reversed(request.messages) if m.role.value == "user"),
             "",

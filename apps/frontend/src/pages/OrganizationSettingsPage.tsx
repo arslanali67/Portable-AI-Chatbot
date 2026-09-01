@@ -3,7 +3,13 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { api } from "../api/client";
 import { errorMessage, useAuth } from "../auth/AuthContext";
-import type { Membership, MembershipRole, Organization } from "../api/types";
+import type {
+  AICredentialStatus,
+  Membership,
+  MembershipRole,
+  Organization,
+  Provider,
+} from "../api/types";
 
 const ROLE_OPTIONS: MembershipRole[] = ["member", "admin", "owner"];
 
@@ -69,6 +75,63 @@ export default function OrganizationSettingsPage() {
   const viewerIsAdmin =
     viewerMembership?.role === "owner" || viewerMembership?.role === "admin";
   const viewerIsOwner = viewerMembership?.role === "owner";
+
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [credentials, setCredentials] = useState<AICredentialStatus[]>([]);
+  const [credError, setCredError] = useState<string | null>(null);
+  const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!viewerIsAdmin) {
+      return;
+    }
+    Promise.all([api.listProviders(), api.listAiCredentials(orgId)])
+      .then(([provs, creds]) => {
+        setProviders(provs);
+        setCredentials(creds);
+      })
+      .catch((err) => setCredError(errorMessage(err)));
+  }, [viewerIsAdmin, orgId]);
+
+  async function saveCredential(providerId: string) {
+    const key = `cred:${providerId}`;
+    if (!beginPending(key)) {
+      return;
+    }
+    setCredError(null);
+    try {
+      const status = await api.setAiCredential(orgId, providerId, keyDrafts[providerId] ?? "");
+      setCredentials((prev) => [...prev.filter((c) => c.provider_id !== providerId), status]);
+      setKeyDrafts((prev) => ({ ...prev, [providerId]: "" }));
+    } catch (err) {
+      setCredError(errorMessage(err));
+    } finally {
+      endPending(key);
+    }
+  }
+
+  async function removeCredential(providerId: string) {
+    if (
+      !window.confirm(
+        `Remove the BYOK key for ${providerId}? Requests will fall back to the platform-shared key.`,
+      )
+    ) {
+      return;
+    }
+    const key = `cred:${providerId}`;
+    if (!beginPending(key)) {
+      return;
+    }
+    setCredError(null);
+    try {
+      await api.removeAiCredential(orgId, providerId);
+      setCredentials((prev) => prev.filter((c) => c.provider_id !== providerId));
+    } catch (err) {
+      setCredError(errorMessage(err));
+    } finally {
+      endPending(key);
+    }
+  }
 
   async function rename(e: FormEvent) {
     e.preventDefault();
@@ -313,6 +376,69 @@ export default function OrganizationSettingsPage() {
           </form>
         )}
       </div>
+
+      {viewerIsAdmin && (
+        <div className="panel">
+          <h2>AI Provider Keys (BYOK)</h2>
+          <p className="muted small">
+            Optional per-provider API key for this organization. When set, it replaces the
+            platform-shared key for that provider. Keys are never shown again after saving —
+            only the last 4 characters.
+          </p>
+          {credError && <div className="error-box">{credError}</div>}
+          {providers.length === 0 ? (
+            <p className="muted">No providers available.</p>
+          ) : (
+            providers.map((provider) => {
+              const cred = credentials.find((c) => c.provider_id === provider.provider_id);
+              const key = `cred:${provider.provider_id}`;
+              return (
+                <div key={provider.provider_id} className="inline-form">
+                  <strong>{provider.display_name}</strong>
+                  {cred ? (
+                    <span className="muted small">
+                      {cred.masked_key} · updated by {cred.updated_by_email ?? "unknown"} on{" "}
+                      {new Date(cred.updated_at).toLocaleDateString()}
+                    </span>
+                  ) : (
+                    <span className="muted small">Using platform-shared key</span>
+                  )}
+                  <input
+                    type="password"
+                    placeholder={cred ? "New API key to replace" : "API key"}
+                    aria-label={`API key for ${provider.display_name}`}
+                    value={keyDrafts[provider.provider_id] ?? ""}
+                    onChange={(e) =>
+                      setKeyDrafts((prev) => ({
+                        ...prev,
+                        [provider.provider_id]: e.target.value,
+                      }))
+                    }
+                    disabled={isPending(key)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => saveCredential(provider.provider_id)}
+                    disabled={isPending(key) || !(keyDrafts[provider.provider_id] ?? "").trim()}
+                  >
+                    {isPending(key) ? "Saving…" : cred ? "Replace" : "Set key"}
+                  </button>
+                  {cred && (
+                    <button
+                      type="button"
+                      className="link-button danger"
+                      onClick={() => removeCredential(provider.provider_id)}
+                      disabled={isPending(key)}
+                    >
+                      {isPending(key) ? "Removing…" : "Remove"}
+                    </button>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
 
       {viewerIsOwner && (
         <div className="panel danger-zone">

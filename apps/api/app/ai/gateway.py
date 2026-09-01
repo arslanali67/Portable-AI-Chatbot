@@ -30,6 +30,7 @@ class AIGateway:
         self,
         request: AIRequest,
         required_capabilities: set[AICapability] | None = None,
+        credential_override: str | None = None,
     ) -> AIResponse:
         required = required_capabilities or {AICapability.TEXT_GENERATION}
         self._validate_request(request)
@@ -56,7 +57,7 @@ class AIGateway:
             )
 
         try:
-            return await provider.generate(request)
+            return await provider.generate(request, credential_override)
         except AIError:
             raise
         except Exception as exc:  # noqa: BLE001 - adapter boundary
@@ -73,7 +74,9 @@ class AIGateway:
         if request.max_tokens is not None and request.max_tokens <= 0:
             raise AIInvalidRequestError("max_tokens must be positive")
 
-    def stream(self, request: AIRequest) -> AsyncGenerator[AIStreamEvent, None]:
+    def stream(
+        self, request: AIRequest, credential_override: str | None = None
+    ) -> AsyncGenerator[AIStreamEvent, None]:
         """Streaming variant of generate — yields normalized AIStreamEvents."""
         required = {AICapability.TEXT_GENERATION, AICapability.STREAMING}
         self._validate_request(request)
@@ -97,4 +100,4 @@ class AIGateway:
                 f"model {request.model_id} lacks capability: {names}"
             )
 
-        return provider.stream(request)
+        return provider.stream(request, credential_override)

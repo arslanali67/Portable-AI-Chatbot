@@ -20,7 +20,7 @@ from app.ai.exceptions import (
     AIProviderUnavailableError,
     AIRateLimitError,
 )
-from app.ai.registry import gateway
+from app.ai.registry import gateway, model_registry, provider_registry
 from app.core.config import settings
 from app.models import Chatbot, Conversation, Message, User
 from app.models.enums import ConversationStatus, MembershipRole, MessageRole
@@ -30,6 +30,7 @@ from app.repositories.membership import MembershipRepository
 from app.repositories.message import MessageRepository
 from app.schemas.chat_runtime import ChatRequest, ChatResponse
 from app.schemas.knowledge import RetrievedChunkResponse
+from app.services.ai_provider_credential import AIProviderCredentialService
 from app.services.ai_provider_override import AIProviderOverrideService
 from app.services.context_builder import ContextBuilder
 from app.services.retrieval import (
@@ -138,7 +139,11 @@ class ChatRuntimeService:
                 )
             if await overrides.is_model_disabled(chatbot.provider_id, chatbot.model_id):
                 raise AIModelNotFoundError(f"model disabled by admin: {chatbot.model_id}")
-            response = await gateway.generate(request)
+            credentials = AIProviderCredentialService(
+                self.messages.db, provider_registry, model_registry
+            )
+            byok_key = await credentials.resolve_decrypted(organization_id, chatbot.provider_id)
+            response = await gateway.generate(request, credential_override=byok_key)
         except AIProviderUnavailableError as exc:
             raise RuntimeErrorAI(502, "AI provider unavailable") from exc
         except AIAuthenticationError as exc:
@@ -237,7 +242,11 @@ class ChatRuntimeService:
                 )
             if await overrides.is_model_disabled(chatbot.provider_id, chatbot.model_id):
                 raise AIModelNotFoundError(f"model disabled by admin: {chatbot.model_id}")
-            async for event in gateway.stream(request):
+            credentials = AIProviderCredentialService(
+                self.messages.db, provider_registry, model_registry
+            )
+            byok_key = await credentials.resolve_decrypted(organization_id, chatbot.provider_id)
+            async for event in gateway.stream(request, credential_override=byok_key):
                 if event.type.value == "token":
                     delta = event.data.get("delta", "")
                     chunks.append(delta)
