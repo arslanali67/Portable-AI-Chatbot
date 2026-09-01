@@ -69,6 +69,7 @@ const BOT_DRAFT: Chatbot = {
   model_id: "fake-model-small",
   rag_enabled: true,
   rag_top_k: null,
+  response_schema: null,
   created_at: "2026-08-01T10:00:00Z",
   updated_at: "2026-08-01T10:00:00Z",
 };
@@ -431,6 +432,98 @@ describe("ChatbotsPage", () => {
       rag_enabled: true,
       rag_top_k: null,
     });
+  });
+
+  it("submits a parsed response_schema object on create", async () => {
+    route({ listBots: jsonResponse(200, []) });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("No chatbots yet. Create one to configure a chatbot.");
+
+    await user.click(screen.getByRole("button", { name: "New chatbot" }));
+    await screen.findByRole("option", { name: "Small A" });
+
+    await user.type(screen.getByLabelText("Name"), "Structured Bot");
+    await user.type(screen.getByLabelText("Slug"), "structured-bot");
+    await user.selectOptions(screen.getByLabelText("Model"), "fake-model-small");
+    fireEvent.change(
+      screen.getByLabelText("Response JSON schema (blank = free-text response)"),
+      { target: { value: '{"type": "object", "required": ["answer"]}' } },
+    );
+
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(calls("POST", /\/chatbots$/)).toHaveLength(1));
+    const [, init] = calls("POST", /\/chatbots$/)[0];
+    expect(JSON.parse(String(init?.body)).response_schema).toEqual({
+      type: "object",
+      required: ["answer"],
+    });
+  });
+
+  it("submits response_schema as null when left blank", async () => {
+    route({ listBots: jsonResponse(200, []) });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("No chatbots yet. Create one to configure a chatbot.");
+
+    await user.click(screen.getByRole("button", { name: "New chatbot" }));
+    await screen.findByRole("option", { name: "Small A" });
+
+    await user.type(screen.getByLabelText("Name"), "Free Text Bot");
+    await user.type(screen.getByLabelText("Slug"), "free-text-bot");
+    await user.selectOptions(screen.getByLabelText("Model"), "fake-model-small");
+
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(calls("POST", /\/chatbots$/)).toHaveLength(1));
+    const [, init] = calls("POST", /\/chatbots$/)[0];
+    expect(JSON.parse(String(init?.body)).response_schema).toBeNull();
+  });
+
+  it("rejects invalid JSON in the response schema field before submitting", async () => {
+    route({ listBots: jsonResponse(200, []) });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("No chatbots yet. Create one to configure a chatbot.");
+
+    await user.click(screen.getByRole("button", { name: "New chatbot" }));
+    await screen.findByRole("option", { name: "Small A" });
+
+    await user.type(screen.getByLabelText("Name"), "Bad Schema Bot");
+    await user.type(screen.getByLabelText("Slug"), "bad-schema-bot");
+    await user.selectOptions(screen.getByLabelText("Model"), "fake-model-small");
+    fireEvent.change(
+      screen.getByLabelText("Response JSON schema (blank = free-text response)"),
+      { target: { value: "{not valid json" } },
+    );
+
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await screen.findByText("Response schema must be valid JSON.");
+    expect(calls("POST", /\/chatbots$/)).toHaveLength(0);
+  });
+
+  it("loads an existing chatbot's response_schema into the edit form", async () => {
+    route({
+      listBots: jsonResponse(200, [
+        { ...BOT_DRAFT, response_schema: { type: "object", required: ["x"] } },
+      ]),
+    });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("Draft Bot");
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    const field = screen.getByLabelText(
+      "Response JSON schema (blank = free-text response)",
+    ) as HTMLTextAreaElement;
+    expect(JSON.parse(field.value)).toEqual({ type: "object", required: ["x"] });
   });
 
   it("enforces the 1-20 bound on the RAG top_k input", async () => {

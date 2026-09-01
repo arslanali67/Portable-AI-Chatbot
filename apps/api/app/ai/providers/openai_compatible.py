@@ -140,6 +140,15 @@ class OpenAICompatibleHTTPProvider(OpenAICompatibleProvider):
             payload["temperature"] = request.temperature
         if request.max_tokens is not None:
             payload["max_tokens"] = request.max_tokens
+        if request.response_schema is not None:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "chatbot_response",
+                    "strict": True,
+                    "schema": request.response_schema,
+                },
+            }
         # metadata is intentionally not sent to the provider.
         return payload
 

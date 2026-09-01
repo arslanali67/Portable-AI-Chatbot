@@ -32,7 +32,9 @@ class AIGateway:
         required_capabilities: set[AICapability] | None = None,
         credential_override: str | None = None,
     ) -> AIResponse:
-        required = required_capabilities or {AICapability.TEXT_GENERATION}
+        required = set(required_capabilities) if required_capabilities else {AICapability.TEXT_GENERATION}
+        if request.response_schema is not None:
+            required.add(AICapability.STRUCTURED_OUTPUT)
         self._validate_request(request)
 
         provider = self.providers.get(request.provider_id)
@@ -79,6 +81,8 @@ class AIGateway:
     ) -> AsyncGenerator[AIStreamEvent, None]:
         """Streaming variant of generate — yields normalized AIStreamEvents."""
         required = {AICapability.TEXT_GENERATION, AICapability.STREAMING}
+        if request.response_schema is not None:
+            required.add(AICapability.STRUCTURED_OUTPUT)
         self._validate_request(request)
 
         provider = self.providers.get(request.provider_id)

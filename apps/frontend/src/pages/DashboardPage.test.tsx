@@ -44,6 +44,7 @@ function bot(overrides: Partial<Chatbot>): Chatbot {
     model_id: "fake-model-small",
     rag_enabled: true,
     rag_top_k: null,
+    response_schema: null,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     ...overrides,

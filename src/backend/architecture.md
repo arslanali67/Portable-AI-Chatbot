@@ -451,7 +451,7 @@ Provider API
 ### Normalized Contracts
 
 - `AIMessage`: `role` (system/user/assistant; future tool) + `content`.
-- `AIRequest`: `provider_id`, `model_id`, `messages`, `system_prompt`, `temperature`, `max_tokens`, `metadata`. Future extension points: tools, response_format, stream, attachments, images, audio.
+- `AIRequest`: `provider_id`, `model_id`, `messages`, `system_prompt`, `temperature`, `max_tokens`, `metadata`, `response_schema` (implemented — see "Structured Output" below). Future extension points: tools, stream, attachments, images, audio.
 - `AIResponse`: `content`, `provider_id`, `model_id`, `finish_reason`, `usage`, `metadata`.
 - `AIUsage`: `input_tokens`, `output_tokens`, `total_tokens`.
 - Application always receives PortableAI objects, never provider SDK response objects.
@@ -511,9 +511,18 @@ Responsibilities: validate request → resolve provider → resolve model → ch
 - Defaults are defined in the registry, never hardcoded in `ChatbotService`, routes, or `AIGateway`.
 - New model never requires migration; new provider never requires core chatbot business-logic changes.
 
+### Structured Output
+
+- Schema source: `chatbots.response_schema` (nullable JSON), chatbot-level config — not per-request — mirroring the `rag_enabled`/`rag_top_k` precedent. NULL keeps today's free-text behavior completely unchanged.
+- Capability gate: `AIGateway.generate`/`.stream` require `AICapability.STRUCTURED_OUTPUT` (never the looser `JSON_MODE` member) whenever `AIRequest.response_schema` is non-`None` — the gateway derives this itself from the request, callers never need to pass it explicitly. A model without the capability registered is rejected before any provider call is made, via the same capability-check mechanism already used for `TEXT_GENERATION`/`STREAMING`.
+- Provider adapter: the OpenAI-compatible adapter's `_build_payload` adds `response_format` using the schema-validated `json_schema` shape (`strict: true`), not the loose `json_object` mode, when a schema is present.
+- Validation: the platform never trusts a provider's json-mode guarantee blindly. `ChatRuntimeService` parses the response as JSON and validates it against the schema (the `jsonschema` package) before ever persisting it. On failure, it retries **exactly once** — the model's invalid reply plus a description of the validation error are appended to the conversation as an ordinary user-role message (the same precedent `ContextBuilder` already uses for injecting non-human context; there is no tool role in this codebase and none was added for this) — and validates the retry. If the retry is still invalid, `ChatRuntimeService` raises the existing adapter-boundary error (`AIInvalidRequestError`, already mapped to a 502-class response) and persists nothing.
+- Streaming: schema validation needs the complete response before it can be judged valid, so a structured-output chatbot's streaming turn makes a single non-streaming `AIGateway.generate` call (with the same validate/retry-once logic) internally and emits one buffered SSE `token` event with the full validated content, followed by `end` — the SSE event shape is unchanged, so the frontend needs no changes. A chatbot with `response_schema` unset keeps today's true incremental `AIGateway.stream` path exactly as before.
+- Capability registered on: the `gemini` model only, based on a documentation review, not a live API test call (no real Gemini credentials are available in this environment). Google's official docs confirm Gemini models support schema-constrained JSON output, but document that via the OpenAI SDK's `.beta.chat.completions.parse()` helper or Gemini's native `responseSchema`/`responseMimeType` field — neither page explicitly confirms the raw `response_format: {"type": "json_schema", "strict": true}` HTTP payload this adapter actually sends over the OpenAI-compatible endpoint. A non-authoritative community forum post claims that exact raw shape works, and separately notes Gemini only supports a subset of the JSON Schema specification (unsupported keywords are silently ignored). **This capability flag is an unverified assumption and should be validated against a live Gemini API call before being relied on in production.** The built-in fake providers do not carry this capability by default; tests that need a capability-bearing double register one locally, the same way other AI-gateway tests already swap in a scoped test provider.
+
 ### Future Extensions
 
-Tool calling, vision/multimodal, structured output, fallback providers, retries, local models, BYOK, usage tracking, provider/model administration — all planned against these contracts. Streaming and embeddings are already implemented (see §14, §18–§20).
+Tool calling, vision/multimodal, fallback providers, retries, local models, BYOK, usage tracking, provider/model administration — all planned against these contracts. Streaming and embeddings are already implemented (see §14, §18–§20).
 
 ## 14. Real Provider Integration
 

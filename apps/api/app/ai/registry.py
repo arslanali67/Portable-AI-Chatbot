@@ -19,6 +19,20 @@ from app.core.config import settings
 
 TEXT = {AICapability.TEXT_GENERATION}
 TEXT_STREAM = {AICapability.TEXT_GENERATION, AICapability.STREAMING}
+# STRUCTURED_OUTPUT is registered here based on a documentation review, not
+# a live API test (no real Gemini credentials are available in this
+# environment). Google's official docs confirm Gemini models support
+# schema-constrained JSON output, but describe that via the OpenAI SDK's
+# .beta.chat.completions.parse() helper or Gemini's native
+# responseSchema/responseMimeType field — neither doc page explicitly
+# confirms the raw response_format: {"type": "json_schema", "strict": true}
+# HTTP payload this adapter actually sends over the OpenAI-compatible
+# endpoint. A non-authoritative community forum post claims that exact raw
+# shape works, and separately notes Gemini only supports a subset of the
+# JSON Schema specification (unsupported keywords are silently ignored).
+# Treat this capability flag as an unverified assumption and validate it
+# against a live Gemini API call before relying on it in production.
+TEXT_STREAM_STRUCTURED = TEXT_STREAM | {AICapability.STRUCTURED_OUTPUT}
 
 
 def build_provider_registry() -> ProviderRegistry:
@@ -80,7 +94,7 @@ def build_provider_registry() -> ProviderRegistry:
                 base_url=settings.openai_base_url,
                 authentication_type="api_key",
                 compatibility_type="openai_compatible",
-                capabilities=TEXT_STREAM,
+                capabilities=TEXT_STREAM_STRUCTURED,
             ),
             api_key=settings.openai_api_key or "",
             base_url=settings.openai_base_url,
@@ -146,7 +160,7 @@ def build_model_registry() -> ModelRegistry:
             context_window=128000,
             max_output_tokens=4096,
             enabled=bool(settings.openai_api_key),
-            capabilities=TEXT_STREAM,
+            capabilities=TEXT_STREAM_STRUCTURED,
         )
     )
 

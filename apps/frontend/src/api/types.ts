@@ -66,6 +66,7 @@ export interface Chatbot {
   model_id: string;
   rag_enabled: boolean;
   rag_top_k: number | null;
+  response_schema: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
@@ -82,6 +83,7 @@ export interface ChatbotCreate {
   model_id: string;
   rag_enabled?: boolean;
   rag_top_k?: number | null;
+  response_schema?: Record<string, unknown> | null;
 }
 
 export interface ChatbotUpdate {
@@ -96,6 +98,7 @@ export interface ChatbotUpdate {
   model_id?: string;
   rag_enabled?: boolean;
   rag_top_k?: number | null;
+  response_schema?: Record<string, unknown> | null;
 }
 
 export type AICapability =

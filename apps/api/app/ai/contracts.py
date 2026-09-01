@@ -41,6 +41,7 @@ class AIRequest:
     temperature: float | None = None
     max_tokens: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    response_schema: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

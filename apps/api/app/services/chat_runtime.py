@@ -5,11 +5,21 @@ AIRequest from chatbot config → AIGateway (outside DB transaction) →
 save assistant message (commit) → response DTO.
 
 Never calls providers directly; always via AIGateway.
+
+Structured output (chatbot.response_schema set): exactly one extra gateway
+call may be made — a single retry, with the validation error fed back to
+the model as corrective feedback, if the first response doesn't validate.
+A chatbot with response_schema=NULL is completely unaffected: one gateway
+call, unchanged from pre-milestone behavior. See _generate_structured().
 """
 
+import json
+from dataclasses import replace
+
+import jsonschema
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.contracts import AIMessage, AIMessageRole, AIRequest
+from app.ai.contracts import AIMessage, AIMessageRole, AIRequest, AIResponse
 from app.ai.exceptions import (
     AIAuthenticationError,
     AICapabilityNotSupportedError,
@@ -88,6 +98,60 @@ class ChatRuntimeService:
             raise RuntimeErrorAI(500, "Knowledge retrieval failed") from exc
         return retrieved, top_k
 
+    async def _generate_structured(
+        self, request: AIRequest, response_schema: dict, credential_override: str | None
+    ) -> AIResponse:
+        """Schema-validated generation: one gateway call, and — only if that
+        response fails validation — exactly one retry with the validation
+        error appended as corrective feedback. Raises AIInvalidRequestError
+        (the existing adapter-boundary 502-class error) if the retry is also
+        invalid; never returns or lets the caller persist invalid content."""
+        structured_request = replace(request, response_schema=response_schema)
+
+        response = await gateway.generate(structured_request, credential_override=credential_override)
+        error = self._schema_validation_error(response.content, response_schema)
+        if error is None:
+            return response
+
+        # Feedback as an ordinary USER-role message — matches the existing
+        # precedent for injecting non-human context (ContextBuilder's RAG
+        # context is also appended as a USER message, not SYSTEM); there is
+        # no TOOL role in this codebase and none is being added here.
+        retry_messages = list(structured_request.messages) + [
+            AIMessage(role=AIMessageRole.ASSISTANT, content=response.content),
+            AIMessage(
+                role=AIMessageRole.USER,
+                content=(
+                    "Your previous response did not satisfy the required JSON schema: "
+                    f"{error}. Respond again with ONLY valid JSON matching the schema, "
+                    "no other text."
+                ),
+            ),
+        ]
+        retry_request = replace(structured_request, messages=retry_messages)
+        retry_response = await gateway.generate(retry_request, credential_override=credential_override)
+        retry_error = self._schema_validation_error(retry_response.content, response_schema)
+        if retry_error is None:
+            return retry_response
+
+        raise AIInvalidRequestError(
+            f"model response did not match the configured schema after one retry: {retry_error}"
+        )
+
+    @staticmethod
+    def _schema_validation_error(content: str, schema: dict) -> str | None:
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as exc:
+            return f"response is not valid JSON: {exc}"
+        try:
+            jsonschema.validate(parsed, schema)
+        except jsonschema.exceptions.ValidationError as exc:
+            return exc.message
+        except jsonschema.exceptions.SchemaError as exc:
+            return f"configured schema is invalid: {exc.message}"
+        return None
+
     async def chat(
         self,
         user: User,
@@ -143,7 +207,12 @@ class ChatRuntimeService:
                 self.messages.db, provider_registry, model_registry
             )
             byok_key = await credentials.resolve_decrypted(organization_id, chatbot.provider_id)
-            response = await gateway.generate(request, credential_override=byok_key)
+            if chatbot.response_schema is not None:
+                response = await self._generate_structured(
+                    request, chatbot.response_schema, byok_key
+                )
+            else:
+                response = await gateway.generate(request, credential_override=byok_key)
         except AIProviderUnavailableError as exc:
             raise RuntimeErrorAI(502, "AI provider unavailable") from exc
         except AIAuthenticationError as exc:
@@ -246,13 +315,27 @@ class ChatRuntimeService:
                 self.messages.db, provider_registry, model_registry
             )
             byok_key = await credentials.resolve_decrypted(organization_id, chatbot.provider_id)
-            async for event in gateway.stream(request, credential_override=byok_key):
-                if event.type.value == "token":
-                    delta = event.data.get("delta", "")
-                    chunks.append(delta)
-                    yield ("token", {"delta": delta})
-                elif event.type.value == "end":
-                    finish_reason = event.data.get("finish_reason", "stop")
+            if chatbot.response_schema is not None:
+                # Schema validation needs the complete response before it can
+                # be judged valid — a structured-output chatbot gets a single
+                # buffered "token" event with the full (validated) content
+                # instead of true incremental streaming. The SSE event shape
+                # (token, then end) is unchanged, so the frontend needs no
+                # changes either way.
+                structured_response = await self._generate_structured(
+                    request, chatbot.response_schema, byok_key
+                )
+                chunks.append(structured_response.content)
+                yield ("token", {"delta": structured_response.content})
+                finish_reason = structured_response.finish_reason
+            else:
+                async for event in gateway.stream(request, credential_override=byok_key):
+                    if event.type.value == "token":
+                        delta = event.data.get("delta", "")
+                        chunks.append(delta)
+                        yield ("token", {"delta": delta})
+                    elif event.type.value == "end":
+                        finish_reason = event.data.get("finish_reason", "stop")
         except AIProviderUnavailableError as exc:
             raise RuntimeErrorAI(502, "AI provider unavailable") from exc
         except AIAuthenticationError as exc:

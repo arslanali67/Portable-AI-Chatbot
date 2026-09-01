@@ -79,7 +79,7 @@ apps/api/
 AI capabilities are **implemented**: a provider-agnostic AI gateway (`app/ai/`), RAG/knowledge ingestion and retrieval (`app/rag/`, `app/services/retrieval.py`, `app/services/context_builder.py`), real OpenAI-compatible providers and embeddings (env-configured, mocked in tests), SSE streaming, and the public embeddable widget. The platform defines clean seams for future extensions:
 
 - `services/agents/` (future): agent orchestration on top of the gateway + RAG.
-- Future extensions: tool calling, structured output, credential management/BYOK, more providers, advanced retrieval (hybrid search, reranking, semantic cache), background workers.
+- Future extensions: tool calling, credential management/BYOK, more providers, advanced retrieval (hybrid search, reranking, semantic cache), background workers.
 - Chatbot models/schemas never leak provider-specific concepts; the chatbot entity stays provider-agnostic and provider/model selection is runtime config.
 
 ## 8. Current Scope — MVP (Complete)
@@ -97,6 +97,7 @@ In scope:
 - Real provider integration: OpenAI-compatible HTTP adapter (credentials from env, mocked in tests); fake providers stay default for offline tests
 - Provider & model management: discovery APIs over the registries; safe DTOs, no credential exposure, chatbot provider/model validation; platform-admin-gated enable/disable mutation via a thin DB override table (registries remain the sole source of executable adapter definitions, capabilities, and credentials — the DB never stores them)
 - BYOK (bring-your-own-key): organization-scoped, Fernet-encrypted AI provider API keys in `ai_provider_credentials`, optional per (organization, provider), falls back to the platform-shared key when absent, never re-displayed after entry (masked last-4 indicator only), orthogonal to the existing enable/disable override.
+- Structured output: per-chatbot JSON-schema-validated responses via `chatbots.response_schema` (nullable — NULL keeps today's free-text behavior unchanged), gated by the existing per-model `AICapability.STRUCTURED_OUTPUT` check; the platform validates the model's output against the schema server-side (never trusting the provider's own json-mode guarantee), retries once with the validation error fed back to the model as corrective feedback, and rejects clearly with no persistence if the retry is still invalid.
 - RAG/knowledge foundation: text ingestion → normalize → chunk → embeddings → pgvector storage → tenant-scoped retrieval
 - Hybrid search: `RetrievalService`/`ChunkRepository` combine pgvector cosine similarity with Postgres full-text search (`tsvector`/GIN) via Reciprocal Rank Fusion (RRF); no new external dependency, `search()`'s signature unchanged, composes transparently with per-chatbot `rag_enabled`/`rag_top_k`.
 - RAG runtime integration: ChatRuntime retrieves knowledge via RetrievalService and assembles context via ContextBuilder (above AIGateway); system prompt authoritative. Per-chatbot RAG config (`chatbots.rag_enabled`, `chatbots.rag_top_k`) lets each chatbot enable/disable retrieval and override `top_k`; `rag_enabled=false` skips RetrievalService entirely (not called-and-discarded), and `rag_top_k=NULL` falls back to the global `settings.rag_top_k` default, which remains the platform default.

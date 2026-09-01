@@ -2,7 +2,9 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from typing import Any
+
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -44,6 +46,9 @@ class Chatbot(Base):
     model_id: Mapped[str] = mapped_column(String(100), default="fake-model-small", nullable=False)
     rag_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     rag_top_k: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Structured output: optional JSON schema the model's response must
+    # satisfy. NULL (default) keeps today's free-text behavior unchanged.
+    response_schema: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

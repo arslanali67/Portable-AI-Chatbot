@@ -33,6 +33,8 @@ export default function ChatbotsPage() {
   const [ragEnabled, setRagEnabled] = useState(true);
   // Empty string = unset (NULL) -> use the global default top_k.
   const [ragTopK, setRagTopK] = useState("");
+  // Empty string = unset (NULL) -> today's free-text behavior, unchanged.
+  const [responseSchemaText, setResponseSchemaText] = useState("");
 
   // Tracks in-flight mutations by a stable key (e.g. "save", "activate:12").
   // The ref guards against duplicate submissions synchronously (before React
@@ -100,6 +102,7 @@ export default function ChatbotsPage() {
     setModelId("");
     setRagEnabled(true);
     setRagTopK("");
+    setResponseSchemaText("");
   }
 
   function openCreate() {
@@ -121,6 +124,9 @@ export default function ChatbotsPage() {
     setModelId(bot.model_id);
     setRagEnabled(bot.rag_enabled);
     setRagTopK(bot.rag_top_k === null ? "" : String(bot.rag_top_k));
+    setResponseSchemaText(
+      bot.response_schema === null ? "" : JSON.stringify(bot.response_schema, null, 2),
+    );
     setShowCreate(true);
   }
 
@@ -129,6 +135,15 @@ export default function ChatbotsPage() {
     if (!providerId || !modelId) {
       setError("Select a provider and a model.");
       return;
+    }
+    let responseSchemaValue: Record<string, unknown> | null = null;
+    if (responseSchemaText.trim() !== "") {
+      try {
+        responseSchemaValue = JSON.parse(responseSchemaText);
+      } catch {
+        setError("Response schema must be valid JSON.");
+        return;
+      }
     }
     if (!beginPending("save")) {
       return;
@@ -149,6 +164,7 @@ export default function ChatbotsPage() {
           model_id: modelId,
           rag_enabled: ragEnabled,
           rag_top_k: ragTopKValue,
+          response_schema: responseSchemaValue,
         });
       } else {
         await api.createChatbot(orgId, {
@@ -163,6 +179,7 @@ export default function ChatbotsPage() {
           model_id: modelId,
           rag_enabled: ragEnabled,
           rag_top_k: ragTopKValue,
+          response_schema: responseSchemaValue,
         });
       }
       setShowCreate(false);
@@ -349,6 +366,15 @@ export default function ChatbotsPage() {
                 min={1}
                 max={20}
                 disabled={!ragEnabled}
+              />
+            </label>
+            <label className="full">
+              Response JSON schema (blank = free-text response)
+              <textarea
+                value={responseSchemaText}
+                onChange={(e) => setResponseSchemaText(e.target.value)}
+                placeholder={'{\n  "type": "object",\n  "properties": { "answer": { "type": "string" } },\n  "required": ["answer"]\n}'}
+                rows={6}
               />
             </label>
           </div>
