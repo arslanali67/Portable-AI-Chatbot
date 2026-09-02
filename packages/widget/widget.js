@@ -129,17 +129,49 @@
 
   var BULLET_LINE = /^[-*]\s+(.*)$/;
   var SAFE_URL_SCHEME = /^https?:\/\//i;
+  // A bare autolink candidate: from "http(s)://" up to the next whitespace
+  // (or end of text) — GFM-style. Trailing sentence punctuation is trimmed
+  // off afterward by trimTrailingPunctuation, not by this regex itself.
+  var BARE_URL = /^https?:\/\/\S+/i;
+  // Trailing chars that are almost always sentence punctuation, not part of
+  // a URL's own path, when they're the very last character of a bare-URL
+  // match: ".", ",", "!", "?", ";", ":", quotes. Stripped greedily (handles
+  // runs like "...?!"). A trailing ")" is only stripped when it's
+  // unbalanced within the candidate (more ")" than "(" seen so far) — that
+  // keeps an intentional, balanced path segment like ".../foo(bar)" intact
+  // while still dropping a sentence's own wrapping paren, e.g.
+  // "(see https://example.com)" -> link excludes the final ")".
+  var TRAILING_PUNCT_CHARS = ".,!?;:'\"";
+  function trimTrailingPunctuation(url) {
+    while (url.length > 0) {
+      var last = url.charAt(url.length - 1);
+      if (TRAILING_PUNCT_CHARS.indexOf(last) !== -1) {
+        url = url.slice(0, -1);
+        continue;
+      }
+      if (last === ")") {
+        var opens = (url.match(/\(/g) || []).length;
+        var closes = (url.match(/\)/g) || []).length;
+        if (closes > opens) {
+          url = url.slice(0, -1);
+          continue;
+        }
+      }
+      break;
+    }
+    return url;
+  }
 
-  // Scans text left-to-right for **bold** spans and [text](url) links,
-  // appending each piece to `parent` as a <strong>, an <a>, or a plain text
-  // node — never innerHTML, never an HTML string. A manual scan (not a
-  // regex split) so a link's URL can contain balanced parentheses (e.g.
-  // Wikipedia-style "foo_(disambiguation)" URLs): "(" and ")" inside the
-  // URL are depth-tracked, and only a ")" at depth 0 — the one matching the
-  // link's own opening "(" — closes the link. A naive "first )" match would
-  // truncate such URLs.
+  // Scans text left-to-right for **bold** spans, [text](url) links, and
+  // bare http(s):// URLs, appending each piece to `parent` as a <strong>,
+  // an <a>, or a plain text node — never innerHTML, never an HTML string.
+  // A manual scan (not a regex split) so a link's URL can contain balanced
+  // parentheses (e.g. Wikipedia-style "foo_(disambiguation)" URLs): "(" and
+  // ")" inside the URL are depth-tracked, and only a ")" at depth 0 — the
+  // one matching the link's own opening "(" — closes the link. A naive
+  // "first )" match would truncate such URLs.
   //
-  // Precedence for the two ambiguous compositions this parser supports:
+  // Precedence for the ambiguous compositions this parser supports:
   //  - A link inside bold text (e.g. "**[text](url)**") works: bold content
   //    is recursed into via this same function, so a nested link survives
   //    and renders as a real <a>. A bracket that isn't part of a
@@ -150,6 +182,14 @@
   //    and is never rescanned, so "**bold**" appears literally. This
   //    matches the spec requirement that a link's .textContent be exactly
   //    the "text" portion, verbatim.
+  //  - A bare URL never double-matches inside an explicit [text](url):
+  //    when the "[" branch below successfully matches a whole link, the
+  //    scan's index jumps straight past it (i = j + 1), so the URL's own
+  //    characters are never revisited by this same loop — there's no
+  //    separate "is this URL already inside a link" check needed, the
+  //    consumed range is simply never scanned again. A bare URL inside
+  //    bold text is scanned the normal way, via the same recursive call
+  //    used for links-inside-bold.
   function appendInlineSpans(parent, text) {
     var i = 0;
     var textStart = 0;
@@ -223,6 +263,23 @@
             }
           }
         }
+      } else if (text.charAt(i) === "h" || text.charAt(i) === "H") {
+        var bareMatch = BARE_URL.exec(text.slice(i));
+        if (bareMatch) {
+          var bareUrl = trimTrailingPunctuation(bareMatch[0]);
+          if (bareUrl.length > 0) {
+            flushText(i);
+            var bareLink = document.createElement("a");
+            bareLink.href = bareUrl;
+            bareLink.target = "_blank";
+            bareLink.rel = "noopener noreferrer";
+            bareLink.textContent = bareUrl; // displayed text is the URL itself, GFM-style
+            parent.appendChild(bareLink);
+            i = i + bareUrl.length;
+            textStart = i;
+            continue;
+          }
+        }
       }
       i++;
     }
@@ -230,12 +287,13 @@
   }
 
   // Minimal markdown -> safe DOM: bold (**text**), bullet lists (lines
-  // starting with "- " or "* "), and [text](url) links only. Returns a
-  // DocumentFragment built entirely via document.createElement/createTextNode
-  // — the caller can appendChild it directly. No other markdown constructs
-  // are recognized; unrecognized syntax (headings, code, numbered lists,
-  // ...) is left as literal text, matching today's behavior for anything
-  // this parser doesn't handle.
+  // starting with "- " or "* "), [text](url) links, and bare http(s)://
+  // URLs (GFM-style autolinking) only. Returns a DocumentFragment built
+  // entirely via document.createElement/createTextNode — the caller can
+  // appendChild it directly. No other markdown constructs are recognized;
+  // unrecognized syntax (headings, code, numbered lists, ...) is left as
+  // literal text, matching today's behavior for anything this parser
+  // doesn't handle.
   function parseInlineMarkdown(text) {
     var frag = document.createDocumentFragment();
     var lines = text.split("\n");

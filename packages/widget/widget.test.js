@@ -329,6 +329,111 @@ describe("widget.js — parseInlineMarkdown (pure)", () => {
     expect(link.textContent).toBe("nested");
     expect(div.textContent).toBe("nested");
   });
+
+  it("autolinks a bare URL in plain text as a real <a> with href and label both equal to the URL", async () => {
+    installScriptTag();
+    vi.stubGlobal("fetch", mockFetch(controlledSseBody()));
+    const widget = await loadWidget();
+
+    const frag = widget.parseInlineMarkdown("Visit https://2wordit.com/ today");
+    const div = document.createElement("div");
+    div.appendChild(frag);
+
+    const link = div.querySelector("a");
+    expect(link).not.toBeNull();
+    expect(link.getAttribute("href")).toBe("https://2wordit.com/");
+    expect(link.textContent).toBe("https://2wordit.com/");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(div.textContent).toBe("Visit https://2wordit.com/ today");
+  });
+
+  it("excludes trailing sentence-ending punctuation from a bare-URL autolink (the reported real-world case)", async () => {
+    installScriptTag();
+    vi.stubGlobal("fetch", mockFetch(controlledSseBody()));
+    const widget = await loadWidget();
+
+    const frag = widget.parseInlineMarkdown(
+      "The website for 2WordIT is https://2wordit.com/.",
+    );
+    const div = document.createElement("div");
+    div.appendChild(frag);
+
+    const link = div.querySelector("a");
+    expect(link).not.toBeNull();
+    expect(link.getAttribute("href")).toBe("https://2wordit.com/");
+    expect(link.textContent).toBe("https://2wordit.com/");
+    // The trailing period is separate plain text right after the <a>, not
+    // swallowed into the href/label and not dropped.
+    expect(link.nextSibling).not.toBeNull();
+    expect(link.nextSibling.textContent).toBe(".");
+    expect(div.textContent).toBe("The website for 2WordIT is https://2wordit.com/.");
+  });
+
+  it("does not double-link an explicit [text](url) — only one <a>, with the custom label, not the bare URL", async () => {
+    installScriptTag();
+    vi.stubGlobal("fetch", mockFetch(controlledSseBody()));
+    const widget = await loadWidget();
+
+    const frag = widget.parseInlineMarkdown("Visit [our site](https://2wordit.com/) today");
+    const div = document.createElement("div");
+    div.appendChild(frag);
+
+    const links = div.querySelectorAll("a");
+    expect(links).toHaveLength(1);
+    expect(links[0].textContent).toBe("our site");
+    expect(links[0].getAttribute("href")).toBe("https://2wordit.com/");
+  });
+
+  it("autolinks a bare URL inside a bullet list item", async () => {
+    installScriptTag();
+    vi.stubGlobal("fetch", mockFetch(controlledSseBody()));
+    const widget = await loadWidget();
+
+    const frag = widget.parseInlineMarkdown("- see https://2wordit.com/ for details");
+    const div = document.createElement("div");
+    div.appendChild(frag);
+
+    const li = div.querySelector("ul li");
+    expect(li).not.toBeNull();
+    const link = li.querySelector("a");
+    expect(link).not.toBeNull();
+    expect(link.getAttribute("href")).toBe("https://2wordit.com/");
+    expect(link.textContent).toBe("https://2wordit.com/");
+  });
+
+  it("autolinks a bare URL inside bold text as a real <a> nested inside <strong>", async () => {
+    installScriptTag();
+    vi.stubGlobal("fetch", mockFetch(controlledSseBody()));
+    const widget = await loadWidget();
+
+    const frag = widget.parseInlineMarkdown("**Check https://2wordit.com/ now**");
+    const div = document.createElement("div");
+    div.appendChild(frag);
+
+    const strong = div.querySelector("strong");
+    expect(strong).not.toBeNull();
+    const link = strong.querySelector("a");
+    expect(link).not.toBeNull();
+    expect(link.getAttribute("href")).toBe("https://2wordit.com/");
+    expect(link.textContent).toBe("https://2wordit.com/");
+    expect(strong.textContent).toBe("Check https://2wordit.com/ now");
+  });
+
+  it("does not falsely match a URL-shaped string that lacks a real http(s):// prefix", async () => {
+    installScriptTag();
+    vi.stubGlobal("fetch", mockFetch(controlledSseBody()));
+    const widget = await loadWidget();
+
+    const frag = widget.parseInlineMarkdown("this contains :// but is not a url, and ftp://example.com isn't http(s) either");
+    const div = document.createElement("div");
+    div.appendChild(frag);
+
+    expect(div.querySelector("a")).toBeNull();
+    expect(div.textContent).toBe(
+      "this contains :// but is not a url, and ftp://example.com isn't http(s) either",
+    );
+  });
 });
 
 describe("widget.js — streaming integration (real SSE flow, no innerHTML anywhere)", () => {
@@ -433,5 +538,37 @@ describe("widget.js — streaming integration (real SSE flow, no innerHTML anywh
     expect(link).not.toBeNull();
     expect(link.textContent).toBe("Link Text");
     expect(link.getAttribute("href")).toBe("https://example.com");
+  });
+
+  it("stays raw textContent for a mid-stream partial bare URL and parses only at `end`", async () => {
+    installScriptTag();
+    const stream = controlledSseBody();
+    vi.stubGlobal("fetch", mockFetch(stream));
+    const widget = await loadWidget();
+
+    widget.sendMessage("share a bare url");
+    await flush();
+    await flush();
+
+    const placeholder = widget.messagesEl.lastElementChild;
+
+    stream.push('event: token\ndata: {"delta":"Visit https://2wor"}\n\n');
+    await flush();
+    expect(placeholder.querySelector("a")).toBeNull();
+    expect(placeholder.textContent).toBe("Visit https://2wor");
+
+    stream.push('event: token\ndata: {"delta":"dit.com/ today"}\n\n');
+    await flush();
+    expect(placeholder.querySelector("a")).toBeNull();
+    expect(placeholder.textContent).toBe("Visit https://2wordit.com/ today");
+
+    stream.push("event: end\ndata: {}\n\n");
+    stream.finish();
+    await flush();
+
+    const link = placeholder.querySelector("a");
+    expect(link).not.toBeNull();
+    expect(link.getAttribute("href")).toBe("https://2wordit.com/");
+    expect(link.textContent).toBe("https://2wordit.com/");
   });
 });
