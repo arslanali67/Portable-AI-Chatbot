@@ -2,7 +2,7 @@
  * Load via: <script src="/widget.js" data-chatbot="PUBLIC_KEY" async></script>
  * Renders messages via safe, explicitly-constructed DOM nodes
  * (document.createElement + textContent/createTextNode) — a minimal
- * bold/bullet-list markdown parser (see parseInlineMarkdown) builds a
+ * bold/bullet-list/link markdown parser (see parseInlineMarkdown) builds a
  * DocumentFragment the same way. Never innerHTML, never an HTML string
  * built from untrusted content, anywhere in this file.
  */
@@ -128,35 +128,114 @@
   }
 
   var BULLET_LINE = /^[-*]\s+(.*)$/;
-  var BOLD_SPAN = /(\*\*[^*\n]+\*\*)/;
+  var SAFE_URL_SCHEME = /^https?:\/\//i;
 
-  // Splits a line of text on **bold** spans and appends each piece to
-  // `parent` as either a <strong> element (textContent only) or a plain
-  // text node — never innerHTML, never an HTML string.
+  // Scans text left-to-right for **bold** spans and [text](url) links,
+  // appending each piece to `parent` as a <strong>, an <a>, or a plain text
+  // node — never innerHTML, never an HTML string. A manual scan (not a
+  // regex split) so a link's URL can contain balanced parentheses (e.g.
+  // Wikipedia-style "foo_(disambiguation)" URLs): "(" and ")" inside the
+  // URL are depth-tracked, and only a ")" at depth 0 — the one matching the
+  // link's own opening "(" — closes the link. A naive "first )" match would
+  // truncate such URLs.
+  //
+  // Precedence for the two ambiguous compositions this parser supports:
+  //  - A link inside bold text (e.g. "**[text](url)**") works: bold content
+  //    is recursed into via this same function, so a nested link survives
+  //    and renders as a real <a>. A bracket that isn't part of a
+  //    "[text](url)" shape (e.g. "**array[0]**") never matches, so it's
+  //    just literal text inside the <strong> — no ambiguity.
+  //  - Bold-looking syntax inside link text (e.g. "[**bold**](url)") does
+  //    NOT render as bold: a link's label is set via .textContent directly
+  //    and is never rescanned, so "**bold**" appears literally. This
+  //    matches the spec requirement that a link's .textContent be exactly
+  //    the "text" portion, verbatim.
   function appendInlineSpans(parent, text) {
-    var parts = text.split(BOLD_SPAN);
-    for (var i = 0; i < parts.length; i++) {
-      var part = parts[i];
-      if (!part) {
-        continue;
-      }
-      if (part.length > 4 && part.slice(0, 2) === "**" && part.slice(-2) === "**") {
-        var strong = document.createElement("strong");
-        strong.textContent = part.slice(2, -2);
-        parent.appendChild(strong);
-      } else {
-        parent.appendChild(document.createTextNode(part));
+    var i = 0;
+    var textStart = 0;
+
+    function flushText(end) {
+      if (end > textStart) {
+        parent.appendChild(document.createTextNode(text.slice(textStart, end)));
       }
     }
+
+    while (i < text.length) {
+      if (text.charAt(i) === "*" && text.charAt(i + 1) === "*") {
+        var closeIdx = text.indexOf("**", i + 2);
+        if (closeIdx !== -1) {
+          var inner = text.slice(i + 2, closeIdx);
+          if (inner.length > 0 && inner.indexOf("\n") === -1 && inner.indexOf("*") === -1) {
+            flushText(i);
+            var strong = document.createElement("strong");
+            appendInlineSpans(strong, inner);
+            parent.appendChild(strong);
+            i = closeIdx + 2;
+            textStart = i;
+            continue;
+          }
+        }
+      } else if (text.charAt(i) === "[") {
+        var closeBracket = text.indexOf("]", i + 1);
+        if (closeBracket !== -1 && text.charAt(closeBracket + 1) === "(") {
+          var linkText = text.slice(i + 1, closeBracket);
+          if (linkText.length > 0 && linkText.indexOf("\n") === -1) {
+            // Depth-track the URL portion: "(" increments, ")" decrements,
+            // and only a ")" at depth 0 is the link's true closing paren.
+            var depth = 1;
+            var j = closeBracket + 2;
+            while (j < text.length && depth > 0) {
+              var ch = text.charAt(j);
+              if (ch === "\n") {
+                break;
+              }
+              if (ch === "(") {
+                depth++;
+              } else if (ch === ")") {
+                depth--;
+                if (depth === 0) {
+                  break;
+                }
+              }
+              j++;
+            }
+            if (depth === 0) {
+              var url = text.slice(closeBracket + 2, j);
+              if (url.length > 0) {
+                flushText(i);
+                if (SAFE_URL_SCHEME.test(url)) {
+                  var a = document.createElement("a");
+                  a.href = url;
+                  a.target = "_blank";
+                  a.rel = "noopener noreferrer";
+                  a.textContent = linkText;
+                  parent.appendChild(a);
+                } else {
+                  // Unsafe scheme (javascript:, data:, ...) — keep the
+                  // label as inert text, never a clickable <a>, never
+                  // dropped.
+                  parent.appendChild(document.createTextNode(linkText));
+                }
+                i = j + 1;
+                textStart = i;
+                continue;
+              }
+            }
+          }
+        }
+      }
+      i++;
+    }
+    flushText(text.length);
   }
 
-  // Minimal markdown -> safe DOM: bold (**text**) and bullet lists (lines
-  // starting with "- " or "* ") only. Returns a DocumentFragment built
-  // entirely via document.createElement/createTextNode — the caller can
-  // appendChild it directly. No other markdown constructs are recognized;
-  // unrecognized syntax (headings, links, code, numbered lists, ...) is
-  // left as literal text, matching today's behavior for anything this
-  // parser doesn't handle.
+  // Minimal markdown -> safe DOM: bold (**text**), bullet lists (lines
+  // starting with "- " or "* "), and [text](url) links only. Returns a
+  // DocumentFragment built entirely via document.createElement/createTextNode
+  // — the caller can appendChild it directly. No other markdown constructs
+  // are recognized; unrecognized syntax (headings, code, numbered lists,
+  // ...) is left as literal text, matching today's behavior for anything
+  // this parser doesn't handle.
   function parseInlineMarkdown(text) {
     var frag = document.createDocumentFragment();
     var lines = text.split("\n");

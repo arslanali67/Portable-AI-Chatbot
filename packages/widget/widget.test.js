@@ -1,6 +1,7 @@
-// Tests for widget.js's markdown rendering: bold (**text**) and bullet
-// lists are parsed into safe, explicitly-constructed DOM nodes (never
-// innerHTML) exactly once — at the SSE `end` event — never mid-stream.
+// Tests for widget.js's markdown rendering: bold (**text**), bullet lists,
+// and [text](url) links are parsed into safe, explicitly-constructed DOM
+// nodes (never innerHTML) exactly once — at the SSE `end` event — never
+// mid-stream.
 //
 // This file (packages/widget/) has no build step or test tooling of its
 // own by design (see the widget's own header comment / architecture.md).
@@ -187,6 +188,147 @@ describe("widget.js — parseInlineMarkdown (pure)", () => {
     expect(div.querySelectorAll("[onerror]")).toHaveLength(0);
     expect(div.textContent).toContain("<script>alert(1)</script>");
   });
+
+  it("renders an https link as a real <a> with exact textContent/href and target/rel guardrails", async () => {
+    installScriptTag();
+    vi.stubGlobal("fetch", mockFetch(controlledSseBody()));
+    const widget = await loadWidget();
+
+    const frag = widget.parseInlineMarkdown("See [docs](https://example.com/docs) for more.");
+    const div = document.createElement("div");
+    div.appendChild(frag);
+
+    const link = div.querySelector("a");
+    expect(link).not.toBeNull();
+    expect(link.textContent).toBe("docs");
+    expect(link.getAttribute("href")).toBe("https://example.com/docs");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+    // The raw URL never appears as visible text anywhere in the container.
+    expect(div.textContent).not.toContain("https://example.com/docs");
+    expect(div.textContent).toBe("See docs for more.");
+  });
+
+  it("neutralizes a javascript: link — plain text, no <a>, no javascript: substring anywhere", async () => {
+    installScriptTag();
+    vi.stubGlobal("fetch", mockFetch(controlledSseBody()));
+    const widget = await loadWidget();
+
+    const frag = widget.parseInlineMarkdown("[click me](javascript:evil)");
+    const div = document.createElement("div");
+    div.appendChild(frag);
+
+    expect(div.querySelector("a")).toBeNull();
+    expect(div.textContent).toBe("click me");
+    expect(div.innerHTML).not.toContain("javascript:");
+  });
+
+  it("neutralizes a data: link — plain text, no <a>, no data: substring anywhere", async () => {
+    installScriptTag();
+    vi.stubGlobal("fetch", mockFetch(controlledSseBody()));
+    const widget = await loadWidget();
+
+    const frag = widget.parseInlineMarkdown("[x](data:text/html,evil)");
+    const div = document.createElement("div");
+    div.appendChild(frag);
+
+    expect(div.querySelector("a")).toBeNull();
+    expect(div.textContent).toBe("x");
+    expect(div.innerHTML).not.toContain("data:");
+  });
+
+  it("renders a link inside a bullet list item with correct <li>/<a> structure", async () => {
+    installScriptTag();
+    vi.stubGlobal("fetch", mockFetch(controlledSseBody()));
+    const widget = await loadWidget();
+
+    const frag = widget.parseInlineMarkdown("- [docs](https://example.com) for details");
+    const div = document.createElement("div");
+    div.appendChild(frag);
+
+    const li = div.querySelector("ul li");
+    expect(li).not.toBeNull();
+    const link = li.querySelector("a");
+    expect(link).not.toBeNull();
+    expect(link.textContent).toBe("docs");
+    expect(link.getAttribute("href")).toBe("https://example.com");
+    expect(li.textContent).toBe("docs for details");
+  });
+
+  it("renders a link nested inside bold text as a real <a> inside <strong>", async () => {
+    installScriptTag();
+    vi.stubGlobal("fetch", mockFetch(controlledSseBody()));
+    const widget = await loadWidget();
+
+    const frag = widget.parseInlineMarkdown("**Read the [docs](https://example.com) now**");
+    const div = document.createElement("div");
+    div.appendChild(frag);
+
+    const strong = div.querySelector("strong");
+    expect(strong).not.toBeNull();
+    const link = strong.querySelector("a");
+    expect(link).not.toBeNull();
+    expect(link.textContent).toBe("docs");
+    expect(link.getAttribute("href")).toBe("https://example.com");
+    expect(strong.textContent).toBe("Read the docs now");
+  });
+
+  it("documented edge case: bold-looking syntax inside link text renders literally, not as <strong>", async () => {
+    installScriptTag();
+    vi.stubGlobal("fetch", mockFetch(controlledSseBody()));
+    const widget = await loadWidget();
+
+    const frag = widget.parseInlineMarkdown("[**bold**](https://example.com)");
+    const div = document.createElement("div");
+    div.appendChild(frag);
+
+    // A link's text portion is set via textContent directly and is never
+    // recursively parsed, so "**bold**" shows up as the link's literal
+    // label — no nested <strong> inside the <a>.
+    const link = div.querySelector("a");
+    expect(link).not.toBeNull();
+    expect(link.textContent).toBe("**bold**");
+    expect(link.querySelector("strong")).toBeNull();
+  });
+
+  it("resolves a Wikipedia-style URL with an internal balanced paren to the complete href", async () => {
+    installScriptTag();
+    vi.stubGlobal("fetch", mockFetch(controlledSseBody()));
+    const widget = await loadWidget();
+
+    const frag = widget.parseInlineMarkdown(
+      "[Example](https://en.wikipedia.org/wiki/Example_(disambiguation))",
+    );
+    const div = document.createElement("div");
+    div.appendChild(frag);
+
+    const link = div.querySelector("a");
+    expect(link).not.toBeNull();
+    expect(link.getAttribute("href")).toBe(
+      "https://en.wikipedia.org/wiki/Example_(disambiguation)",
+    );
+    expect(link.textContent).toBe("Example");
+    // No trailing stray characters left over outside the <a>.
+    expect(div.textContent).toBe("Example");
+  });
+
+  it("resolves a URL with multiple nested levels of parens to the complete href", async () => {
+    installScriptTag();
+    vi.stubGlobal("fetch", mockFetch(controlledSseBody()));
+    const widget = await loadWidget();
+
+    const frag = widget.parseInlineMarkdown(
+      "[nested](https://example.com/foo(bar(baz)))",
+    );
+    const div = document.createElement("div");
+    div.appendChild(frag);
+
+    const link = div.querySelector("a");
+    expect(link).not.toBeNull();
+    expect(link.getAttribute("href")).toBe("https://example.com/foo(bar(baz))");
+    expect(link.textContent).toBe("nested");
+    expect(div.textContent).toBe("nested");
+  });
 });
 
 describe("widget.js — streaming integration (real SSE flow, no innerHTML anywhere)", () => {
@@ -259,5 +401,37 @@ describe("widget.js — streaming integration (real SSE flow, no innerHTML anywh
     // After parsing: still no live <script> element anywhere.
     expect(placeholder.querySelectorAll("script")).toHaveLength(0);
     expect(document.querySelectorAll("script[data-chatbot]")).toHaveLength(1); // only the loader tag
+  });
+
+  it("stays raw textContent for a mid-stream partial link and parses only at `end`", async () => {
+    installScriptTag();
+    const stream = controlledSseBody();
+    vi.stubGlobal("fetch", mockFetch(stream));
+    const widget = await loadWidget();
+
+    widget.sendMessage("share a link");
+    await flush();
+    await flush();
+
+    const placeholder = widget.messagesEl.lastElementChild;
+
+    stream.push('event: token\ndata: {"delta":"[Link Te"}\n\n');
+    await flush();
+    expect(placeholder.querySelector("a")).toBeNull();
+    expect(placeholder.textContent).toBe("[Link Te");
+
+    stream.push('event: token\ndata: {"delta":"xt](https://example.com)"}\n\n');
+    await flush();
+    expect(placeholder.querySelector("a")).toBeNull();
+    expect(placeholder.textContent).toBe("[Link Text](https://example.com)");
+
+    stream.push("event: end\ndata: {}\n\n");
+    stream.finish();
+    await flush();
+
+    const link = placeholder.querySelector("a");
+    expect(link).not.toBeNull();
+    expect(link.textContent).toBe("Link Text");
+    expect(link.getAttribute("href")).toBe("https://example.com");
   });
 });
