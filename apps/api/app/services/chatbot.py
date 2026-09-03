@@ -3,7 +3,7 @@
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.registry import model_registry, provider_registry
+from app.ai.registry import model_registry, provider_registry, tool_registry
 from app.models import Chatbot
 from app.models.enums import ChatbotStatus
 from app.repositories.chatbot import ChatbotRepository
@@ -24,6 +24,12 @@ class InvalidStatusTransitionError(Exception):
 
 
 class InvalidProviderModelError(Exception):
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
+class InvalidToolError(Exception):
     def __init__(self, detail: str) -> None:
         super().__init__(detail)
         self.detail = detail
@@ -64,6 +70,21 @@ async def _validate_provider_model(
         raise InvalidProviderModelError("model is disabled")
 
 
+def _validate_tools(tools: list[dict] | None) -> None:
+    """Reject any tool entry whose name isn't in the platform's tool
+    registry — chatbots.tools selects from the code-owned allowlist, it
+    never defines arbitrary tools. Only "name" is load-bearing here; a
+    stored "description"/"parameters" is not trusted at request-build
+    time (the registry's own definition is sent to the model instead)."""
+    if not tools:
+        return
+    for entry in tools:
+        if not isinstance(entry, dict) or "name" not in entry:
+            raise InvalidToolError("each tool entry requires a 'name'")
+        if not tool_registry.exists(entry["name"]):
+            raise InvalidToolError(f"unknown tool: {entry['name']}")
+
+
 class ChatbotService:
     def __init__(self, db_session: AsyncSession):
         self.chatbots = ChatbotRepository(db_session)
@@ -78,6 +99,7 @@ class ChatbotService:
         await _validate_provider_model(
             self.chatbots.db, payload.provider_id, payload.model_id
         )
+        _validate_tools(payload.tools)
 
         chatbot = await self.chatbots.create(
             organization_id=organization_id,
@@ -132,6 +154,8 @@ class ChatbotService:
                 payload.provider_id or chatbot.provider_id,
                 payload.model_id or chatbot.model_id,
             )
+        if "tools" in payload.model_fields_set:
+            _validate_tools(payload.tools)
 
         for field, value in payload.model_dump(exclude_unset=True).items():
             setattr(chatbot, field, value)

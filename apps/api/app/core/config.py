@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     rag_top_k: int = 5
     rag_max_context_chars: int = 8000
 
+    # Tool execution (platform-defined allowlist) — in-process function
+    # calls, bounded by this timeout via asyncio.wait_for.
+    tool_execution_timeout_seconds: float = 5.0
+
     # File ingestion limits
     max_file_size_bytes: int = 10 * 1024 * 1024
     max_extracted_text_chars: int = 100_000

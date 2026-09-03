@@ -12,21 +12,28 @@ the model as corrective feedback, if the first response doesn't validate.
 A chatbot with response_schema=NULL is completely unaffected: one gateway
 call, unchanged from pre-milestone behavior. See _generate_structured().
 
-Tool calling (chatbot.tools set) is surface-only: the platform never
-executes a tool. It's always exactly one gateway call — a tool-call
-request from the model is the terminal output of the turn, persisted as
-an ordinary ASSISTANT message (human-readable content summary; raw
-tool-call data in metadata). No second call, no auto-continuation, no
-tool-result message type.
+Tool calling (chatbot.tools set): when chatbot.response_schema is ALSO set,
+tool calls stay surface-only (see _generate_structured — unchanged, exact
+pre-milestone behavior for that combination). Otherwise, a tool-call
+request is executed for real via _run_with_tool_execution(): the platform
+runs the registered tool, feeds the result back to the model, and repeats
+up to a small bounded number of iterations until the model returns a final
+text response (or the cap forces one). Intermediate tool-call/tool-result
+exchanges are ephemeral (in-memory AIMessage objects only); only the
+turn's final text answer is persisted as one ASSISTANT message, with a
+full tool_execution_trace riding in its metadata. See
+_run_with_tool_execution() and architecture.md's "Tool Execution
+(Platform-Defined Allowlist)".
 """
 
+import asyncio
 import json
 from dataclasses import replace
 
 import jsonschema
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.contracts import AIMessage, AIMessageRole, AIRequest, AIResponse
+from app.ai.contracts import AIMessage, AIMessageRole, AIRequest, AIResponse, AIToolCall
 from app.ai.exceptions import (
     AIAuthenticationError,
     AICapabilityNotSupportedError,
@@ -37,8 +44,10 @@ from app.ai.exceptions import (
     AIProviderUnavailableError,
     AIRateLimitError,
 )
-from app.ai.registry import gateway, model_registry, provider_registry
+from app.ai.registry import gateway, model_registry, provider_registry, tool_registry
+from app.ai.tools.base import ToolExecutionError
 from app.core.config import settings
+from app.core.logging import get_logger
 from app.models import Chatbot, Conversation, Message, User
 from app.models.enums import ConversationStatus, MembershipRole, MessageRole
 from app.repositories.chatbot import ChatbotRepository
@@ -54,6 +63,14 @@ from app.services.retrieval import (
     ChatbotNotFoundError as RetrievalChatbotNotFoundError,
     RetrievalService,
 )
+
+logger = get_logger("portableai.chat_runtime")
+
+# Tool execution loop: bounded total gateway calls per turn (1 original +
+# up to 4 tool-round-trips). The final permitted call omits `tools`
+# entirely, structurally forcing a text-only answer rather than failing
+# the turn when the cap is reached.
+_MAX_TOOL_ITERATIONS = 5
 
 
 class ConversationNotFoundError(Exception):
@@ -178,6 +195,110 @@ class ChatRuntimeService:
         ]
         return summary, tool_calls_meta
 
+    async def _run_with_tool_execution(
+        self,
+        request: AIRequest,
+        credential_override: str | None,
+        *,
+        organization_id: int,
+        chatbot_id: int,
+    ) -> tuple[AIResponse, list[dict]]:
+        """Executes registered tools the model requests, feeding results
+        back and re-calling the model, until it returns a final text
+        response (no more tool calls) or _MAX_TOOL_ITERATIONS is reached.
+        On the final permitted iteration, `tools` is omitted from the
+        request entirely, structurally forcing a text-only answer rather
+        than failing the turn. Intermediate tool-call/tool-result
+        exchanges are ephemeral (in-memory AIMessage objects only) — never
+        persisted to the messages table; the caller persists only the
+        final response, with the returned trace riding in its metadata.
+        Only called when chatbot.tools is set and chatbot.response_schema
+        is NOT set — see chat()/stream_turn()."""
+        messages = list(request.messages)
+        trace: list[dict] = []
+        current_request = request
+
+        for iteration in range(1, _MAX_TOOL_ITERATIONS + 1):
+            is_final_attempt = iteration == _MAX_TOOL_ITERATIONS
+            if is_final_attempt:
+                current_request = replace(current_request, tools=None)
+
+            response = await gateway.generate(current_request, credential_override=credential_override)
+
+            if not response.tool_calls or is_final_attempt:
+                return response, trace
+
+            messages.append(
+                AIMessage(
+                    role=AIMessageRole.ASSISTANT,
+                    content=response.content,
+                    tool_calls=response.tool_calls,
+                )
+            )
+            for tool_call in response.tool_calls:
+                result = await self._execute_tool(
+                    tool_call, organization_id=organization_id, chatbot_id=chatbot_id
+                )
+                trace.append(
+                    {
+                        "iteration": iteration,
+                        "name": tool_call.name,
+                        "arguments": tool_call.arguments,
+                        "result": result,
+                    }
+                )
+                messages.append(
+                    AIMessage(role=AIMessageRole.TOOL, content=result, tool_call_id=tool_call.id)
+                )
+            current_request = replace(current_request, messages=messages)
+
+        # Unreachable: every iteration either returns (a non-tool-call
+        # response, or the forced final attempt) before reaching here.
+        raise AssertionError("tool execution loop exited without a response")  # pragma: no cover
+
+    async def _execute_tool(
+        self, tool_call: AIToolCall, *, organization_id: int, chatbot_id: int
+    ) -> str:
+        """Runs one tool call and always returns a string result — never
+        raises. An unknown tool, invalid/unparseable arguments, an
+        expected ToolExecutionError, a timeout, or any other unexpected
+        exception all become a clean, generic error-shaped result fed
+        back to the model — never a raw traceback, never logged with
+        sensitive detail, never a whole-turn failure."""
+        tool = tool_registry.get(tool_call.name)
+        if tool is None:
+            return json.dumps({"error": f"unknown tool: {tool_call.name}"})
+
+        try:
+            arguments = json.loads(tool_call.arguments) if tool_call.arguments else {}
+            if not isinstance(arguments, dict):
+                raise ToolExecutionError("tool arguments must be a JSON object")
+        except json.JSONDecodeError:
+            return json.dumps({"error": "invalid tool arguments: not valid JSON"})
+
+        try:
+            result = await asyncio.wait_for(
+                tool.execute(
+                    arguments,
+                    organization_id=organization_id,
+                    chatbot_id=chatbot_id,
+                    db_session=self.messages.db,
+                ),
+                timeout=settings.tool_execution_timeout_seconds,
+            )
+            return result
+        except ToolExecutionError as exc:
+            return json.dumps({"error": str(exc)})
+        except asyncio.TimeoutError:
+            return json.dumps({"error": "tool execution timed out"})
+        except Exception:  # noqa: BLE001 - never leak internals to the model or logs
+            logger.warning(
+                "tool execution failed unexpectedly (name=%s, chatbot_id=%s)",
+                tool_call.name,
+                chatbot_id,
+            )
+            return json.dumps({"error": "tool execution failed"})
+
     async def chat(
         self,
         user: User,
@@ -235,9 +356,17 @@ class ChatRuntimeService:
                 self.messages.db, provider_registry, model_registry
             )
             byok_key = await credentials.resolve_decrypted(organization_id, chatbot.provider_id)
+            tool_trace: list[dict] | None = None
             if chatbot.response_schema is not None:
+                # Mutual exclusion with real execution: tools stay
+                # surface-only/unexecuted here, exact pre-milestone
+                # behavior for this combination — unchanged.
                 response = await self._generate_structured(
                     request, chatbot.response_schema, byok_key
+                )
+            elif chatbot.tools:
+                response, tool_trace = await self._run_with_tool_execution(
+                    request, byok_key, organization_id=organization_id, chatbot_id=chatbot_id
                 )
             else:
                 response = await gateway.generate(request, credential_override=byok_key)
@@ -263,6 +392,8 @@ class ChatRuntimeService:
         }
         if tool_calls_meta is not None:
             message_metadata["tool_calls"] = tool_calls_meta
+        if tool_trace:
+            message_metadata["tool_execution_trace"] = tool_trace
         assistant_sequence = (await self.messages.get_latest_sequence(conversation_id)) + 1
         assistant_message = await self.messages.create(
             conversation_id=conversation_id,
@@ -338,6 +469,7 @@ class ChatRuntimeService:
         chunks: list[str] = []
         finish_reason = "stop"
         turn_tool_calls_meta: list[dict] | None = None
+        turn_tool_trace: list[dict] | None = None
         try:
             overrides = AIProviderOverrideService(self.messages.db)
             if await overrides.is_provider_disabled(chatbot.provider_id):
@@ -351,21 +483,30 @@ class ChatRuntimeService:
             )
             byok_key = await credentials.resolve_decrypted(organization_id, chatbot.provider_id)
             if chatbot.response_schema is not None or chatbot.tools:
-                # Both structured output (schema validation needs the
-                # complete response before it can be judged valid) and tool
-                # calling (a tool-call request only exists once the response
-                # is fully assembled) share the same buffered fallback: a
-                # single non-streaming AIGateway.generate call, emitting one
-                # "token" + "end" SSE pair instead of true incremental
-                # streaming. The SSE event shape is unchanged either way, so
-                # the frontend needs no changes.
+                # Both structured output and tool calling share the same
+                # buffered fallback — one or more non-streaming
+                # AIGateway.generate calls (a single call for structured
+                # output; possibly several for tool execution's internal
+                # loop), emitting exactly one "token" + "end" SSE pair
+                # regardless of how many internal calls happened. The SSE
+                # event shape is unchanged either way, so the frontend
+                # needs no changes.
                 if chatbot.response_schema is not None:
+                    # Mutual exclusion with real execution: tools stay
+                    # surface-only/unexecuted here, exact pre-milestone
+                    # behavior for this combination — unchanged. (The
+                    # outer `if` above guarantees chatbot.tools is truthy
+                    # whenever this is False, so no trailing `else` is
+                    # needed.)
                     buffered_response = await self._generate_structured(
                         request, chatbot.response_schema, byok_key
                     )
                 else:
-                    buffered_response = await gateway.generate(
-                        request, credential_override=byok_key
+                    buffered_response, turn_tool_trace = await self._run_with_tool_execution(
+                        request,
+                        byok_key,
+                        organization_id=organization_id,
+                        chatbot_id=chatbot_id,
                     )
                 content, turn_tool_calls_meta = self._persisted_content_and_tool_calls(
                     buffered_response
@@ -402,6 +543,8 @@ class ChatRuntimeService:
         }
         if turn_tool_calls_meta is not None:
             stream_metadata["tool_calls"] = turn_tool_calls_meta
+        if turn_tool_trace:
+            stream_metadata["tool_execution_trace"] = turn_tool_trace
         assistant_sequence = (await self.messages.get_latest_sequence(conversation_id)) + 1
         assistant_message = await self.messages.create(
             conversation_id=conversation_id,

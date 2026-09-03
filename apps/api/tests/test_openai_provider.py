@@ -7,7 +7,7 @@ conversion, response normalization, error mapping, and security boundaries.
 import pytest
 from httpx import AsyncClient, Request, Response
 
-from app.ai.contracts import AIMessage, AIMessageRole, AIRequest
+from app.ai.contracts import AIMessage, AIMessageRole, AIRequest, AIToolCall
 from app.ai.exceptions import (
     AIAuthenticationError,
     AIInvalidRequestError,
@@ -177,6 +177,48 @@ async def test_payload_wraps_tools_in_openai_function_shape_when_present() -> No
             },
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_payload_replays_tool_calls_and_tool_call_id_symmetrically() -> None:
+    """Wire-shape symmetry with _parse_response's extraction (see
+    test_tool_calls_extracted_from_response below): an assistant history
+    message that requested a tool call must carry the same tool_calls
+    shape the provider originally sent back, and a tool-result history
+    message must carry the matching tool_call_id — the tool execution
+    loop's replay depends on this round-tripping correctly."""
+    t = _transport()
+    provider = _provider(AsyncClient(transport=t))
+    history = [
+        AIMessage(role=AIMessageRole.USER, content="what's the weather?"),
+        AIMessage(
+            role=AIMessageRole.ASSISTANT,
+            content="",
+            tool_calls=[
+                AIToolCall(id="call_1", name="get_weather", arguments='{"location": "Boston"}')
+            ],
+        ),
+        AIMessage(role=AIMessageRole.TOOL, content="Sunny, 72F", tool_call_id="call_1"),
+    ]
+    await provider.generate(_request(messages=history))
+    import json
+
+    payload = json.loads(t.requests[0].content)
+    messages = payload["messages"]
+    assistant_msg = next(m for m in messages if m["role"] == "assistant")
+    assert assistant_msg["tool_calls"] == [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "get_weather", "arguments": '{"location": "Boston"}'},
+        }
+    ]
+    tool_msg = next(m for m in messages if m["role"] == "tool")
+    assert tool_msg == {"role": "tool", "content": "Sunny, 72F", "tool_call_id": "call_1"}
+    # A plain history message (no tool data) is unaffected — no stray keys.
+    user_msg = next(m for m in messages if m["role"] == "user")
+    assert "tool_calls" not in user_msg
+    assert "tool_call_id" not in user_msg
 
 
 # --- Response normalization ---

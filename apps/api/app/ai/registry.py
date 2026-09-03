@@ -14,6 +14,10 @@ from app.ai.model_registry import ModelRegistry
 from app.ai.provider_registry import ProviderRegistry
 from app.ai.providers.fake import FakeAIProvider
 from app.ai.providers.openai_compatible import OpenAICompatibleHTTPProvider
+from app.ai.tools.calculate_tool import CalculatorTool
+from app.ai.tools.datetime_tool import DateTimeTool
+from app.ai.tools.knowledge_search_tool import KnowledgeSearchTool
+from app.ai.tools.registry import ToolRegistry
 from app.core.config import settings
 
 
@@ -174,9 +178,21 @@ def build_gateway() -> AIGateway:
     )
 
 
+def build_tool_registry() -> ToolRegistry:
+    """The platform-defined tool execution allowlist. Exactly these 3 —
+    no organization-defined or webhook-style tool is ever registered here.
+    See architecture.md's "Tool Execution (Platform-Defined Allowlist)"."""
+    registry = ToolRegistry()
+    registry.register(DateTimeTool())
+    registry.register(CalculatorTool())
+    registry.register(KnowledgeSearchTool())
+    return registry
+
+
 provider_registry = build_provider_registry()
 model_registry = build_model_registry()
 gateway = build_gateway()
+tool_registry = build_tool_registry()
 
 
 # Chatbot defaults

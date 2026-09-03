@@ -22,6 +22,7 @@ from app.services.chatbot import (
     DuplicateSlugError,
     InvalidProviderModelError,
     InvalidStatusTransitionError,
+    InvalidToolError,
 )
 from app.services.widget_config import (
     ImageTooLargeError,
@@ -48,6 +49,8 @@ async def create_chatbot(
             detail="Slug already taken in this organization",
         )
     except InvalidProviderModelError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.detail)
+    except InvalidToolError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.detail)
     return chatbot
 
@@ -93,6 +96,8 @@ async def update_chatbot(
             detail="Slug already taken in this organization",
         )
     except InvalidProviderModelError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.detail)
+    except InvalidToolError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.detail)
 
 

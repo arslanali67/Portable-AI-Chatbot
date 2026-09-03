@@ -18,6 +18,9 @@ jsonschema==4.26.0
 redis
 httpx
 pgvector
+# zoneinfo (stdlib) has no bundled tz database on Windows/some minimal Linux
+# images — tzdata supplies it. Required for the get_current_datetime tool.
+tzdata
 pypdf
 # Test-only: generates sample PDFs for the file-ingestion suite (import name: fpdf).
 fpdf2

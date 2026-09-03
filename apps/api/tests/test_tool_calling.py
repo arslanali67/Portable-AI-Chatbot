@@ -1,8 +1,21 @@
-"""Tool calling (surface-only, no execution) tests — per-chatbot tool
-definitions, the model's tool-call request captured and persisted as-is.
-No test here ever needs more than one gateway call per turn — that is
-itself the structural proof execution genuinely isn't implemented
-anywhere: there is no tool-result message type and no second round-trip.
+"""Tool calling capture/persistence tests.
+
+Since the tool-execution milestone, a chatbot with `tools` set (and no
+`response_schema`) executes real, registered tools via
+ChatRuntimeService._run_with_tool_execution() — see test_tool_execution.py
+for that loop's coverage. This file covers what's unchanged: the
+surface-only capture/persistence SHAPE (tool_calls -> human-readable
+content summary + metadata), which still applies verbatim whenever
+`response_schema` is ALSO set (the mutual-exclusion carve-out — see
+architecture.md's "Tool Execution (Platform-Defined Allowlist)"), plus
+the tools=NULL-unchanged and capability-gating cases which never touch
+execution either way.
+
+Uses "get_current_datetime" as the tool name throughout because chatbot
+save-time validation now rejects any name not in the platform's tool
+registry (app/ai/tools/registry.py) — an arbitrary name like the
+original "get_weather" would be rejected at chatbot creation, before any
+of these tests could even set up their scenario.
 
 Require Docker PostgreSQL + alembic upgrade head. Run: pytest -m identity
 """
@@ -32,7 +45,7 @@ _RUN = uuid.uuid4().hex[:8]
 
 TOOLS = [
     {
-        "name": "get_weather",
+        "name": "get_current_datetime",
         "description": "Get current weather for a location",
         "parameters": {
             "type": "object",
@@ -43,6 +56,10 @@ TOOLS = [
 ]
 
 TOOL_CAPS = {AICapability.TEXT_GENERATION, AICapability.STREAMING, AICapability.TOOL_CALLING}
+# The mutual-exclusion combo tests also set response_schema, which the
+# gateway auto-derives an additional STRUCTURED_OUTPUT capability
+# requirement from.
+TOOL_AND_SCHEMA_CAPS = TOOL_CAPS | {AICapability.STRUCTURED_OUTPUT}
 
 
 def _email(name: str) -> str:
@@ -218,15 +235,17 @@ def _text_response(content: str) -> AIResponse:
     )
 
 
-def _tool_call_response() -> AIResponse:
+def _tool_call_response(content: str = "") -> AIResponse:
     return AIResponse(
-        content="",
+        content=content,
         provider_id="fake-a",
         model_id="fake-model-small",
         finish_reason="tool_calls",
         usage=AIUsage(input_tokens=1, output_tokens=1),
         tool_calls=[
-            AIToolCall(id="call_1", name="get_weather", arguments='{"location": "Boston"}')
+            AIToolCall(
+                id="call_1", name="get_current_datetime", arguments='{"location": "Boston"}'
+            )
         ],
     )
 
@@ -247,13 +266,24 @@ def test_no_tools_makes_exactly_one_call_unchanged() -> None:
         gateway.providers, gateway.models = op, om
 
 
-# --- tools set, model requests a tool call ---
+# --- mutual exclusion: tools + response_schema together stay surface-only ---
 
 
-def test_tools_set_model_requests_tool_call() -> None:
-    gateway, op, om, provider = _install_provider(_tool_call_response(), TOOL_CAPS)
+def test_tools_and_response_schema_combo_stays_surface_only() -> None:
+    """A chatbot with BOTH tools and response_schema set keeps tool calls
+    surface-only/unexecuted — exact pre-milestone behavior for this
+    specific combination (see architecture.md's "Tool Execution
+    (Platform-Defined Allowlist)" mutual-exclusion note). The scripted
+    response's content is valid JSON matching the schema so
+    _generate_structured's validation passes on the first call — proving
+    this is genuinely the old single-call capture path, not a retry."""
+    gateway, op, om, provider = _install_provider(
+        _tool_call_response(content='{"note": "ok"}'), TOOL_AND_SCHEMA_CAPS
+    )
     try:
-        token, org_id, bot_id, conv_id = _setup(tools=TOOLS)
+        token, org_id, bot_id, conv_id = _setup(
+            tools=TOOLS, response_schema={"type": "object"}
+        )
         r = _chat(token, org_id, conv_id, "what's the weather in Boston?")
         assert r.status_code == 200, r.text
 
@@ -262,15 +292,20 @@ def test_tools_set_model_requests_tool_call() -> None:
 
         body = r.json()
         assert body["assistant_message"]["content"] == (
-            'Requested tool call: get_weather({"location": "Boston"})'
+            'Requested tool call: get_current_datetime({"location": "Boston"})'
         )
 
         rows = asyncio.run(_messages(conv_id))
         assert [(role, seq) for role, _, seq, _ in rows] == [("user", 1), ("assistant", 2)]
         assistant_meta = json.loads(rows[1][3])
         assert assistant_meta["tool_calls"] == [
-            {"id": "call_1", "name": "get_weather", "arguments": '{"location": "Boston"}'}
+            {
+                "id": "call_1",
+                "name": "get_current_datetime",
+                "arguments": '{"location": "Boston"}',
+            }
         ]
+        assert "tool_execution_trace" not in assistant_meta
     finally:
         gateway.providers, gateway.models = op, om
 
@@ -310,13 +345,21 @@ def test_capability_gating_rejects_before_any_call() -> None:
         gateway.providers, gateway.models = op, om
 
 
-# --- streaming: buffered single-call path ---
+# --- streaming: buffered single-call path (mutual-exclusion combo) ---
 
 
-def test_streaming_tools_uses_buffered_single_call() -> None:
-    gateway, op, om, provider = _install_provider(_tool_call_response(), TOOL_CAPS)
+def test_streaming_tools_and_response_schema_combo_uses_buffered_single_call() -> None:
+    """Same mutual-exclusion carve-out as
+    test_tools_and_response_schema_combo_stays_surface_only, over the
+    streaming path — still exactly one buffered token+end SSE pair, no
+    execution loop involved."""
+    gateway, op, om, provider = _install_provider(
+        _tool_call_response(content='{"note": "ok"}'), TOOL_AND_SCHEMA_CAPS
+    )
     try:
-        token, org_id, bot_id, conv_id = _setup(tools=TOOLS)
+        token, org_id, bot_id, conv_id = _setup(
+            tools=TOOLS, response_schema={"type": "object"}
+        )
         r = _stream(token, org_id, conv_id, "what's the weather?")
         assert r.status_code == 200, r.text
 
@@ -328,14 +371,21 @@ def test_streaming_tools_uses_buffered_single_call() -> None:
         assert event_types == ["start", "user", "start", "token", "end"]
         token_events = [data for etype, data in events if etype == "token"]
         assert token_events == [
-            {"delta": 'Requested tool call: get_weather({"location": "Boston"})'}
+            {"delta": 'Requested tool call: get_current_datetime({"location": "Boston"})'}
         ]
 
         rows = asyncio.run(_messages(conv_id))
-        assert rows[1][1] == 'Requested tool call: get_weather({"location": "Boston"})'
+        assert rows[1][1] == (
+            'Requested tool call: get_current_datetime({"location": "Boston"})'
+        )
         assistant_meta = json.loads(rows[1][3])
         assert assistant_meta["tool_calls"] == [
-            {"id": "call_1", "name": "get_weather", "arguments": '{"location": "Boston"}'}
+            {
+                "id": "call_1",
+                "name": "get_current_datetime",
+                "arguments": '{"location": "Boston"}',
+            }
         ]
+        assert "tool_execution_trace" not in assistant_meta
     finally:
         gateway.providers, gateway.models = op, om

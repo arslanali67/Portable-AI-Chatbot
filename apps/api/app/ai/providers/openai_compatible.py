@@ -133,7 +133,24 @@ class OpenAICompatibleHTTPProvider(OpenAICompatibleProvider):
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
         for message in request.messages:
-            messages.append({"role": message.role.value, "content": message.content})
+            built: dict = {"role": message.role.value, "content": message.content}
+            # Symmetric with _parse_response's extraction below: an assistant
+            # message replayed from history that requested tool calls must
+            # carry the same tool_calls shape the provider originally sent,
+            # so a following "tool" message's tool_call_id can be matched
+            # against it.
+            if message.tool_calls:
+                built["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.name, "arguments": tc.arguments},
+                    }
+                    for tc in message.tool_calls
+                ]
+            if message.tool_call_id is not None:
+                built["tool_call_id"] = message.tool_call_id
+            messages.append(built)
 
         payload: dict = {"model": request.model_id, "messages": messages}
         if request.temperature is not None:
