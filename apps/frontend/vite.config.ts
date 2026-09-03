@@ -1,5 +1,12 @@
+import https from "node:https";
+
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
+
+// keepAlive:false avoids the dev proxy reusing a stale/dead socket to the
+// remote Railway backend, which otherwise surfaces as ECONNRESET or a
+// multi-minute hang instead of a fast, retryable failure.
+const remoteAgent = new https.Agent({ keepAlive: false });
 
 export default defineConfig({
   plugins: [react()],
@@ -36,12 +43,18 @@ export default defineConfig({
         target: "https://portable-ai-chatbot-production.up.railway.app",
         changeOrigin: true,
         secure: true,
+        agent: remoteAgent,
+        timeout: 15000,
+        proxyTimeout: 15000,
       },
 
       "/widget.js": {
         target: "https://portable-ai-chatbot-production.up.railway.app",
         changeOrigin: true,
         secure: true,
+        agent: remoteAgent,
+        timeout: 15000,
+        proxyTimeout: 15000,
       },
     },
   },
