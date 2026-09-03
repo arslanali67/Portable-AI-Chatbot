@@ -1,7 +1,6 @@
 """Auth service — registration, authentication, token issuance, refresh-token
 rotation, logout, and password reset."""
 
-import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -20,8 +19,7 @@ from app.models import User
 from app.repositories.auth_token import PasswordResetTokenRepository, RefreshTokenRepository
 from app.repositories.user import UserRepository
 from app.schemas.auth import RegisterRequest
-
-logger = logging.getLogger("portableai.auth")
+from app.services.email import EmailService
 
 
 class DuplicateEmailError(Exception):
@@ -45,10 +43,11 @@ class PasswordResetTokenInvalidError(Exception):
 
 
 class AuthService:
-    def __init__(self, db_session: AsyncSession):
+    def __init__(self, db_session: AsyncSession, email_service: EmailService | None = None):
         self.users = UserRepository(db_session)
         self.refresh_tokens = RefreshTokenRepository(db_session)
         self.reset_tokens = PasswordResetTokenRepository(db_session)
+        self.email_service = email_service or EmailService()
 
     async def register(self, payload: RegisterRequest) -> User:
         email = payload.email.lower()
@@ -155,12 +154,11 @@ class AuthService:
         await self.reset_tokens.db.commit()
 
         reset_url = f"{settings.frontend_base_url}/reset-password?token={raw}"
-        # DEV-STUB ONLY — no transactional email provider is configured yet
-        # (see architecture.md "Refresh Token Rotation & Password Reset").
-        # Logging a raw bearer token is a deliberate, temporary exception to
-        # the "never log bearer credentials" policy and must not ship as-is
-        # to a real production deployment with real user emails.
-        logger.info("Password reset requested for user_id=%s: %s", user.id, reset_url)
+        # Delivery failure never propagates (EmailService never raises) and
+        # is intentionally not surfaced here — the caller's response must
+        # stay identical whether delivery succeeded or failed, exactly as
+        # it already stays identical whether the account exists or not.
+        await self.email_service.send_password_reset_email(to_email=user.email, reset_url=reset_url)
 
     async def confirm_password_reset(self, raw_token: str, new_password: str) -> None:
         row = await self.reset_tokens.get_by_hash(hash_token(raw_token))

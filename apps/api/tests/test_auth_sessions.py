@@ -6,6 +6,7 @@ Require Docker PostgreSQL + identity tables. Run: pytest -m identity
 import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -195,6 +196,76 @@ def test_password_reset_request_identical_for_existing_and_unknown_email() -> No
 
     assert existing.status_code == unknown.status_code == 204
     assert existing.text == unknown.text == ""
+
+
+def test_password_reset_request_email_call_gated_on_real_account_response_stays_identical() -> None:
+    """The most important test in this milestone: with real email delivery
+    mocked (not the log-only stub), confirm the send function is called
+    only when the account genuinely exists, while the HTTP response stays
+    byte-identical either way — enumeration safety is unaffected by
+    switching from log-only to real delivery."""
+    email = _email("emailgate")
+    _register(email)
+    unknown_email = _email("emailgate-unknown")
+
+    with patch(
+        "app.services.email.EmailService.send_password_reset_email", new_callable=AsyncMock
+    ) as mock_send:
+        mock_send.return_value = True
+        existing_resp = client.post("/api/v1/auth/password-reset/request", json={"email": email})
+        unknown_resp = client.post(
+            "/api/v1/auth/password-reset/request", json={"email": unknown_email}
+        )
+
+    assert existing_resp.status_code == unknown_resp.status_code == 204
+    assert existing_resp.text == unknown_resp.text == ""
+    # The core proof: exactly one send, for the real account only.
+    mock_send.assert_called_once()
+    assert mock_send.call_args.kwargs["to_email"] == email
+
+
+def test_password_reset_request_email_contains_recipient_and_a_working_raw_token() -> None:
+    email = _email("emailcontent")
+    _register(email)
+
+    with patch(
+        "app.services.email.EmailService.send_password_reset_email", new_callable=AsyncMock
+    ) as mock_send:
+        mock_send.return_value = True
+        r = client.post("/api/v1/auth/password-reset/request", json={"email": email})
+    assert r.status_code == 204
+
+    mock_send.assert_called_once()
+    call_kwargs = mock_send.call_args.kwargs
+    assert call_kwargs["to_email"] == email
+    assert "token=" in call_kwargs["reset_url"]
+    raw_token = call_kwargs["reset_url"].split("token=", 1)[1]
+
+    # Prove it's the genuine, usable raw token — not a placeholder — by
+    # actually completing a reset with it.
+    confirm = client.post(
+        "/api/v1/auth/password-reset/confirm",
+        json={"token": raw_token, "new_password": "brand-new-password-456"},
+    )
+    assert confirm.status_code == 204
+
+
+def test_password_reset_request_resend_failure_still_generic_response() -> None:
+    """If the Resend call itself fails, the response must stay exactly the
+    same generic shape — a delivery failure must never leak into the HTTP
+    response or break enumeration safety."""
+    email = _email("resendfail")
+    _register(email)
+
+    with patch(
+        "app.services.email.EmailService.send_password_reset_email", new_callable=AsyncMock
+    ) as mock_send:
+        mock_send.return_value = False  # simulated Resend failure
+        r = client.post("/api/v1/auth/password-reset/request", json={"email": email})
+
+    assert r.status_code == 204
+    assert r.text == ""
+    mock_send.assert_called_once()
 
 
 def test_password_reset_request_is_rate_limited() -> None:

@@ -49,6 +49,16 @@ class Settings(BaseSettings):
         ..., description="Fernet key for encrypting stored AI provider credentials"
     )
 
+    # Password-reset email delivery (Resend). Empty by default so local
+    # dev/test keeps working without a real key (see app/services/email.py's
+    # log-only fallback); required in production — enforced below in
+    # fail_fast_production, not via Field(...), since it's fine to be empty
+    # outside production. Never log this value.
+    resend_api_key: str = ""
+    # Sender address — Resend's shared test address by default (works with
+    # zero domain setup); swap to a verified custom domain via config alone.
+    email_from_address: str = "onboarding@resend.dev"
+
     # Stripe billing — webhook signing secret is deployment-fixed (like
     # JWT_SECRET), required, never DB-stored/admin-editable: it's generated
     # once when the webhook endpoint is registered in the Stripe dashboard.
@@ -155,6 +165,8 @@ class Settings(BaseSettings):
             raise ValueError("Production requires a PostgreSQL DATABASE_URL.")
         if self.debug:
             raise ValueError("Production must not enable DEBUG.")
+        if not self.resend_api_key:
+            raise ValueError("Production requires RESEND_API_KEY for password-reset email delivery.")
         return self
 
     @property
