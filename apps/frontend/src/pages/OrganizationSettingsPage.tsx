@@ -261,9 +261,14 @@ export default function OrganizationSettingsPage() {
           <h1>{organization.name}</h1>
           <p className="muted">/{organization.slug} · Settings</p>
         </div>
-        <Link to={`/organizations/${orgId}`} className="button secondary">
-          Back
-        </Link>
+        <div className="actions">
+          <Link to={`/organizations/${orgId}/billing`} className="button secondary">
+            Billing
+          </Link>
+          <Link to={`/organizations/${orgId}`} className="button secondary">
+            Back
+          </Link>
+        </div>
       </div>
 
       {error && <div className="error-box">{error}</div>}

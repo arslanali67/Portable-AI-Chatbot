@@ -12,6 +12,7 @@ bcrypt
 email-validator
 cryptography==50.0.1
 jsonschema==4.26.0
+stripe==15.6.1
 # Redis is a declared future rate-limiter backend seam (app/core/rate_limit.py
 # defines a Redis-backed implementation contract; the MVP ships the in-memory
 # limiter). No Redis infrastructure is deployed or required at runtime.

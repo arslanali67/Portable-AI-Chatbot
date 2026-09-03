@@ -10,6 +10,8 @@ from app.models.message import Message
 from app.models.organization import Organization
 from app.models.password_reset_token import PasswordResetToken
 from app.models.refresh_token import RefreshToken
+from app.models.stripe_credential import StripeCredential
+from app.models.subscription import Subscription
 from app.models.user import User
 from app.models.widget_config import WidgetConfig
 from app.models.widget_session import WidgetSession
@@ -27,6 +29,8 @@ __all__ = [
     "Organization",
     "PasswordResetToken",
     "RefreshToken",
+    "StripeCredential",
+    "Subscription",
     "User",
     "WidgetConfig",
     "WidgetSession",

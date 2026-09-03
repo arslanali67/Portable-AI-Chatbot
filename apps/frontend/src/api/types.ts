@@ -275,6 +275,42 @@ export interface PlatformOrganizationDetail extends PlatformOrganizationSummary 
   message_count: number;
 }
 
+export type BillingTier = "pro" | "enterprise";
+
+export interface CheckoutResponse {
+  checkout_url: string;
+}
+
+export interface SubscriptionStatus {
+  tier: string | null;
+  status: string | null;
+  current_period_end: string | null;
+}
+
+export interface Invoice {
+  id: string;
+  created: string;
+  amount_paid: number;
+  currency: string;
+  status: string;
+  hosted_invoice_url: string | null;
+}
+
+export interface InvoiceList {
+  items: Invoice[];
+}
+
+export interface StripeCredentialStatus {
+  masked_key: string;
+  updated_at: string;
+  updated_by_email: string | null;
+}
+
+export interface SubscriptionOverride {
+  tier: string | null;
+  status: string | null;
+}
+
 export interface ApiError {
   status: number;
   detail: string | Record<string, unknown>;

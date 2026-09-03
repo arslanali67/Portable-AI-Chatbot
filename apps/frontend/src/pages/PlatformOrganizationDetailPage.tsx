@@ -14,6 +14,12 @@ export default function PlatformOrganizationDetailPage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [overrideTier, setOverrideTier] = useState("");
+  const [overrideStatus, setOverrideStatus] = useState("");
+  const [overriding, setOverriding] = useState(false);
+  const [overrideResult, setOverrideResult] = useState<{ tier: string | null; status: string | null } | null>(
+    null,
+  );
 
   const load = useCallback(() => {
     setLoading(true);
@@ -51,6 +57,23 @@ export default function PlatformOrganizationDetailPage() {
       setError(errorMessage(err));
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function onOverride(e: FormEvent) {
+    e.preventDefault();
+    setOverriding(true);
+    setError(null);
+    try {
+      const result = await api.overridePlatformSubscription(orgId, {
+        tier: overrideTier.trim() || null,
+        status: overrideStatus.trim() || null,
+      });
+      setOverrideResult(result);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setOverriding(false);
     }
   }
 
@@ -125,6 +148,36 @@ export default function PlatformOrganizationDetailPage() {
               </button>
             </div>
           </form>
+        )}
+      </div>
+
+      <div className="panel">
+        <h2>Subscription override</h2>
+        <p className="muted small">
+          Directly sets this organization's tier/status, bypassing Stripe entirely (e.g. to comp
+          an account). A later real Stripe webhook overwrites this normally.
+        </p>
+        <form onSubmit={onOverride} className="inline-form">
+          <input
+            placeholder="Tier (e.g. pro, enterprise, or blank)"
+            aria-label="Tier"
+            value={overrideTier}
+            onChange={(e) => setOverrideTier(e.target.value)}
+          />
+          <input
+            placeholder="Status (e.g. active, canceled, or blank)"
+            aria-label="Status"
+            value={overrideStatus}
+            onChange={(e) => setOverrideStatus(e.target.value)}
+          />
+          <button type="submit" disabled={overriding}>
+            {overriding ? "Saving…" : "Set subscription"}
+          </button>
+        </form>
+        {overrideResult && (
+          <p className="muted small">
+            Now: tier={overrideResult.tier ?? "none"}, status={overrideResult.status ?? "none"}
+          </p>
         )}
       </div>
 

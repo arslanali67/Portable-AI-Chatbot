@@ -42,10 +42,27 @@ class Settings(BaseSettings):
 
     # BYOK AI provider credential encryption — required, environment-only,
     # never stored in the DB. No rotation mechanism in this MVP: losing this
-    # key makes every stored credential permanently undecryptable.
+    # key makes every stored credential permanently undecryptable. Also
+    # reused (deliberately, not a second key) for the platform-wide Stripe
+    # credential — see stripe_credential below.
     ai_credential_encryption_key: str = Field(
         ..., description="Fernet key for encrypting stored AI provider credentials"
     )
+
+    # Stripe billing — webhook signing secret is deployment-fixed (like
+    # JWT_SECRET), required, never DB-stored/admin-editable: it's generated
+    # once when the webhook endpoint is registered in the Stripe dashboard.
+    # The Stripe API secret key itself is NOT here — it's platform-wide but
+    # admin-editable at runtime, so it lives encrypted in stripe_credential
+    # (app/models/stripe_credential.py), not in environment config.
+    stripe_webhook_secret: str = Field(
+        ..., description="Stripe webhook endpoint signing secret (whsec_...)"
+    )
+    # Tier -> Stripe Price ID mapping (app/billing/tiers.py). Placeholder
+    # defaults until a real Stripe account/Price exists — never a hardcoded
+    # dollar amount anywhere in this codebase.
+    stripe_price_id_pro: str = "price_placeholder_pro"
+    stripe_price_id_enterprise: str = "price_placeholder_enterprise"
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"

@@ -1,12 +1,14 @@
 import type {
   AICredentialStatus,
   ApiError,
+  CheckoutResponse,
   Chatbot,
   ChatbotCreate,
   ChatbotUpdate,
   Conversation,
   ConversationList,
   DisabledUpdate,
+  InvoiceList,
   KnowledgeDocument,
   KnowledgeDocumentList,
   KnowledgeSearchResult,
@@ -24,6 +26,9 @@ import type {
   PlatformOrganizationSummary,
   Provider,
   StreamEvent,
+  StripeCredentialStatus,
+  SubscriptionOverride,
+  SubscriptionStatus,
   TokenResponse,
   User,
   WidgetConfig,
@@ -497,6 +502,38 @@ export const api = {
       `/api/v1/platform/organizations/${orgId}/enable`,
       { method: "POST" },
     );
+  },
+  overridePlatformSubscription(
+    orgId: number,
+    data: SubscriptionOverride,
+  ): Promise<SubscriptionStatus> {
+    return request<SubscriptionStatus>(
+      `/api/v1/platform/organizations/${orgId}/subscription`,
+      { method: "PATCH", ...jsonBody(data) },
+    );
+  },
+  getStripeSettings(): Promise<StripeCredentialStatus | null> {
+    return request<StripeCredentialStatus | null>("/api/v1/platform/settings/stripe");
+  },
+  setStripeSettings(secretKey: string): Promise<StripeCredentialStatus> {
+    return request<StripeCredentialStatus>("/api/v1/platform/settings/stripe", {
+      method: "PUT",
+      ...jsonBody({ secret_key: secretKey }),
+    });
+  },
+
+  // Billing (organization-scoped, OWNER only)
+  createCheckoutSession(orgId: number, tier: string): Promise<CheckoutResponse> {
+    return request<CheckoutResponse>(`/api/v1/organizations/${orgId}/billing/checkout`, {
+      method: "POST",
+      ...jsonBody({ tier }),
+    });
+  },
+  getSubscription(orgId: number): Promise<SubscriptionStatus> {
+    return request<SubscriptionStatus>(`/api/v1/organizations/${orgId}/billing/subscription`);
+  },
+  listInvoices(orgId: number): Promise<InvoiceList> {
+    return request<InvoiceList>(`/api/v1/organizations/${orgId}/billing/invoices`);
   },
 };
 

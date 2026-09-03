@@ -16,6 +16,7 @@ export default function PlatformAdminLayout() {
           <NavLink to="/platform-admin" end>
             Organizations
           </NavLink>
+          <NavLink to="/platform-admin/settings">Settings</NavLink>
           <NavLink to="/" end>
             ← Back to app
           </NavLink>

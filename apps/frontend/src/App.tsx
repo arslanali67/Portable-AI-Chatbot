@@ -5,6 +5,7 @@ import { RequireAuth } from "./components/RequireAuth";
 import { RequirePlatformAdmin } from "./components/RequirePlatformAdmin";
 import AppLayout from "./layout/AppLayout";
 import PlatformAdminLayout from "./layout/PlatformAdminLayout";
+import BillingPage from "./pages/BillingPage";
 import ChatbotDetailPage from "./pages/ChatbotDetailPage";
 import ChatbotsPage from "./pages/ChatbotsPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -14,6 +15,7 @@ import OrganizationsPage from "./pages/OrganizationsPage";
 import OrganizationSettingsPage from "./pages/OrganizationSettingsPage";
 import PlatformOrganizationDetailPage from "./pages/PlatformOrganizationDetailPage";
 import PlatformOrganizationsPage from "./pages/PlatformOrganizationsPage";
+import PlatformSettingsPage from "./pages/PlatformSettingsPage";
 import ProvidersPage from "./pages/ProvidersPage";
 import RegisterPage from "./pages/RegisterPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
@@ -50,6 +52,7 @@ export default function App() {
               path="/organizations/:organizationId/settings"
               element={<OrganizationSettingsPage />}
             />
+            <Route path="/organizations/:organizationId/billing" element={<BillingPage />} />
             <Route path="/organizations/:organizationId/chatbots/:chatbotId/*" element={<ChatbotDetailPage />} />
             <Route path="/providers" element={<ProvidersPage />} />
           </Route>
@@ -61,6 +64,7 @@ export default function App() {
             }
           >
             <Route path="/platform-admin" element={<PlatformOrganizationsPage />} />
+            <Route path="/platform-admin/settings" element={<PlatformSettingsPage />} />
             <Route
               path="/platform-admin/organizations/:organizationId"
               element={<PlatformOrganizationDetailPage />}

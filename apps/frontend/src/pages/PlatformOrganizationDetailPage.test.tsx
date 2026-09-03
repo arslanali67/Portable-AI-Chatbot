@@ -123,4 +123,36 @@ describe("PlatformOrganizationDetailPage", () => {
     );
     expect(enableCall).toBeDefined();
   });
+
+  it("submits a manual subscription override", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (path.endsWith("/platform/organizations/5/subscription") && method === "PATCH") {
+        return jsonResponse(200, { tier: "enterprise", status: "active", current_period_end: null });
+      }
+      if (path.endsWith("/platform/organizations/5")) return jsonResponse(200, ACTIVE_ORG);
+      return jsonResponse(404, { detail: "Not found" });
+    });
+
+    renderPage();
+
+    await screen.findByText("Acme Corp");
+    await user.type(screen.getByLabelText("Tier"), "enterprise");
+    await user.type(screen.getByLabelText("Status"), "active");
+    await user.click(screen.getByRole("button", { name: "Set subscription" }));
+
+    await screen.findByText(/tier=enterprise, status=active/);
+    const overrideCall = fetchMock.mock.calls.find(
+      (c) =>
+        String(c[0]).endsWith("/platform/organizations/5/subscription") &&
+        c[1]?.method === "PATCH",
+    );
+    expect(overrideCall).toBeDefined();
+    expect(JSON.parse(String(overrideCall?.[1]?.body))).toEqual({
+      tier: "enterprise",
+      status: "active",
+    });
+  });
 });

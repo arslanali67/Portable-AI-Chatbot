@@ -4,6 +4,8 @@ from app.api.v1 import (
     ai_credentials,
     ai_management,
     auth,
+    billing,
+    billing_webhook,
     chatbots,
     conversations,
     health,
@@ -24,4 +26,6 @@ api_router.include_router(ai_management.router)
 api_router.include_router(ai_credentials.router)
 api_router.include_router(knowledge.router)
 api_router.include_router(platform.router)
+api_router.include_router(billing.router)
+api_router.include_router(billing_webhook.router)
 api_router.include_router(public_widget.router)

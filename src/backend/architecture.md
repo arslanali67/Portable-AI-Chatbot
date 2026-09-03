@@ -146,6 +146,45 @@ The one deliberate exception to this section's tenant-isolation invariant: `GET 
 - **Public widget enforcement**: `app/api/v1/public_widget.py`'s org resolution path (`public_key → chatbot → organization`) checks `disabled_at` at both the config endpoint and the chat/stream endpoint (a visitor can hit either independently) — if disabled, responds with the organization's `disabled_message` if set, otherwise a generic fallback ("This assistant is currently unavailable."), and never proceeds to session creation or chat/stream.
 - Enabling restores all access immediately, at both the admin-console and public-widget paths — no residual disabled state anywhere once `disabled_at` is cleared.
 
+## 8b. Billing (Stripe, Flat Tiers)
+
+Per-organization flat-tier subscriptions via Stripe Checkout, synced by webhook. Mocked Stripe client in every test — no real Stripe account or network call anywhere in this codebase.
+
+### Data Model
+
+- `subscriptions` (`app/models/subscription.py`): `organization_id` (FK, UNIQUE — one subscription per organization), `tier` (nullable str), `status` (nullable str, Stripe's own vocabulary: `active`/`past_due`/`canceled`/`incomplete`/`unpaid`/etc.), `stripe_customer_id` (nullable), `stripe_subscription_id` (nullable), `current_period_end` (nullable timestamptz), timestamps.
+- **No row for an organization means Free tier, always active, never touched by any billing logic.** A row is created only when an organization's owner starts a real Checkout flow, or a platform admin manually assigns a tier. This migration creates zero rows for existing organizations — deploying this feature cannot disable or otherwise affect any organization that never interacts with billing.
+- `stripe_credential` (`app/models/stripe_credential.py`): a single-row table (`id` always `1`) holding the platform-wide Stripe secret API key, Fernet-encrypted (`encrypted_secret_key`), `updated_at`/`updated_by` — structurally identical to `ai_provider_credentials`' encrypt-on-write/decrypt-just-in-time pattern, reusing the existing `settings.ai_credential_encryption_key` (no second encryption key introduced).
+
+### Tier Registry
+
+- `app/billing/tiers.py`: code-owned metadata, mirroring `ProviderRegistry`'s philosophy — `TIERS = {"pro": TierMetadata(stripe_price_id=settings.stripe_price_id_pro, ...), "enterprise": TierMetadata(stripe_price_id=settings.stripe_price_id_enterprise, ...)}`. Free has no registry entry and no Stripe object — it is simply the absence of a `subscriptions` row. Stripe Price IDs come from settings/env, never a hardcoded dollar amount anywhere in this codebase.
+
+### Checkout Flow
+
+- `POST /api/v1/organizations/{organization_id}/billing/checkout` (body `{"tier": str}`), `Depends(require_organization_role(MembershipRole.OWNER))` — the same bar as organization deletion, since this is a financial commitment. Creates or reuses a Stripe Customer for the organization, creates a Stripe Checkout Session (`mode="subscription"`) for the resolved tier's Price ID, and returns the Checkout redirect URL.
+- This endpoint never mutates the `subscriptions` table directly — a Checkout session can be abandoned. Only a confirmed webhook event ever changes subscription state.
+
+### Webhook
+
+- `POST /api/v1/billing/webhook` lives entirely outside normal JWT auth — Stripe cannot send a bearer token. Its only trust boundary is cryptographic: `stripe.Webhook.construct_event(raw_body, signature_header, settings.stripe_webhook_secret)` runs **before** any parsing or business logic; a missing/invalid signature is rejected immediately with no DB access. This is a materially different threat model from the public widget's boundary (which trusts a server-derived `public_key`/session and layers on rate limiting/origin checks) — here, the entire boundary is Stripe's HMAC signature, since there is no session or per-request identity to check.
+- `STRIPE_WEBHOOK_SECRET` is a deployment-fixed environment variable (like `JWT_SECRET`), never DB-stored or admin-editable — it is generated once when the webhook endpoint URL is registered in the Stripe dashboard, out of band.
+- Events handled:
+  - `checkout.session.completed` → upsert the `subscriptions` row (customer id, subscription id, tier, `status="active"`).
+  - `customer.subscription.updated` → sync `status`/`current_period_end`. Transition to `canceled` → `OrganizationRepository.disable(org, message="This organization's subscription has lapsed.")` (the exact §8a mechanism, not a parallel one). Transition back to `active` (e.g. a recovered card) → `OrganizationRepository.enable(org)`.
+  - `customer.subscription.deleted` → same disable path as `canceled`.
+  - `invoice.payment_failed` → sync/log only, **never** a disable action — Stripe's own configured retry/dunning window is the actual grace-period mechanism; only the eventual `canceled` status (via `customer.subscription.updated`) triggers disable. A single failed charge never locks an organization out.
+
+### Platform-Admin Manual Override
+
+- `PATCH /api/v1/platform/organizations/{id}/subscription` (body `{"tier": str | None, "status": str | None}`), `Depends(require_platform_admin)` — directly upserts the `subscriptions` row, bypassing Stripe entirely (e.g. to comp an account: `stripe_customer_id`/`stripe_subscription_id` stay `NULL`). A later real webhook event overwrites this row normally via the same upsert path used by `checkout.session.completed` — no special-casing between admin-set and Stripe-set rows.
+- Re-enabling a billing-lapsed organization needs no new code — the existing `POST /api/v1/platform/organizations/{id}/enable` (§8a) already covers it.
+- A new masked/write-only Stripe secret-key settings field (mirrors BYOK exactly) lives on a new `/platform-admin/settings` page, `Depends(require_platform_admin)`.
+
+### Invoice History
+
+- A self-serve page for the organization owner (`Depends(require_organization_role(MembershipRole.OWNER))`) queries Stripe live (`stripe.Invoice.list(customer=stripe_customer_id)`) on each page load — no locally-synced invoice table. Low-traffic path; Stripe remains the single source of truth for payment records.
+
 ## 9. Identity System
 
 ### Entities
@@ -1096,7 +1135,7 @@ CI therefore enforces the same verification commands developers run locally; it 
 
 ## 26. Out of Scope (current milestone)
 
-WebSocket transport, widget per-install customization beyond the current public config, recursive crawling/sitemaps/JS rendering/OCR, background workers, reranking, semantic cache, document versioning, automatic re-indexing, more embedding providers, billing, analytics, agents, MCP, idempotency keys, usage persistence, fallback/circuit breaker (transient-failure retry-with-backoff is implemented — see §13's "Transient Provider Error Retry"), provider/model DB tables, provider enable/disable mutation, platform-admin role.
+WebSocket transport, widget per-install customization beyond the current public config, recursive crawling/sitemaps/JS rendering/OCR, background workers, reranking, semantic cache, document versioning, automatic re-indexing, more embedding providers, analytics, agents, MCP, idempotency keys, usage persistence, fallback/circuit breaker (transient-failure retry-with-backoff is implemented — see §13's "Transient Provider Error Retry"), provider/model DB tables, provider enable/disable mutation, platform-admin role.
 
 ## 27. Future AI Gateway Extensions
 
@@ -1108,7 +1147,7 @@ Foundation implemented (`app/ai/`, `app/rag/`, SSE streaming, public widget). Fu
 
 ## 28. Explicitly Out of Scope
 
-OAuth, Google/GitHub login, email verification, MFA, more real providers, credential management UI, LangChain, LlamaIndex, agents, integrations, billing. (Password reset and refresh tokens shipped — see 'Refresh Token Rotation & Password Reset' below.)
+OAuth, Google/GitHub login, email verification, MFA, more real providers, credential management UI, LangChain, LlamaIndex, agents, integrations. (Password reset and refresh tokens shipped — see 'Refresh Token Rotation & Password Reset' below.)
 
 ## 29. Production Hardening
 
