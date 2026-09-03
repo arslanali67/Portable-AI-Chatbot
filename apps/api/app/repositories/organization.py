@@ -1,6 +1,8 @@
 """Organization repository — data access for organizations."""
 
-from sqlalchemy import select
+from datetime import datetime, timezone
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Membership, Organization
@@ -12,6 +14,29 @@ class OrganizationRepository:
 
     async def get(self, organization_id: int) -> Organization | None:
         return await self.db.get(Organization, organization_id)
+
+    async def list_all(self, *, limit: int, offset: int) -> tuple[list[Organization], int]:
+        """Every organization on the platform, unscoped by membership.
+
+        Platform-dashboard-only (app/services/platform.py) — the one
+        deliberate cross-tenant listing in this codebase. See
+        architecture.md §8a.
+        """
+        total = await self.db.scalar(select(func.count()).select_from(Organization))
+        result = await self.db.execute(
+            select(Organization).order_by(Organization.id).limit(limit).offset(offset)
+        )
+        return list(result.scalars().all()), total or 0
+
+    async def disable(self, organization: Organization, *, message: str | None) -> Organization:
+        organization.disabled_at = datetime.now(timezone.utc)
+        organization.disabled_message = message
+        return organization
+
+    async def enable(self, organization: Organization) -> Organization:
+        organization.disabled_at = None
+        organization.disabled_message = None
+        return organization
 
     async def get_by_slug(self, slug: str) -> Organization | None:
         result = await self.db.execute(select(Organization).where(Organization.slug == slug))

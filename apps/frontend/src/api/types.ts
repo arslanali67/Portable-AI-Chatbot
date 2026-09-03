@@ -236,6 +236,45 @@ export interface WidgetConfigUpdate {
   widget_position?: WidgetPosition | null;
 }
 
+export interface PlatformOrganizationSummary {
+  id: number;
+  name: string;
+  slug: string;
+  created_at: string;
+  owner_email: string | null;
+  member_count: number;
+  chatbot_count: number;
+  last_activity_at: string | null;
+  disabled_at: string | null;
+  disabled_message: string | null;
+}
+
+export interface PlatformOrganizationList {
+  items: PlatformOrganizationSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface PlatformMemberSummary {
+  email: string;
+  role: MembershipRole;
+  joined_at: string;
+}
+
+export interface PlatformChatbotSummary {
+  name: string;
+  slug: string;
+  status: ChatbotStatus;
+  created_at: string;
+}
+
+export interface PlatformOrganizationDetail extends PlatformOrganizationSummary {
+  members: PlatformMemberSummary[];
+  chatbots: PlatformChatbotSummary[];
+  message_count: number;
+}
+
 export interface ApiError {
   status: number;
   detail: string | Record<string, unknown>;

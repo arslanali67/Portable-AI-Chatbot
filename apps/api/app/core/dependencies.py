@@ -79,6 +79,14 @@ async def require_organization_membership(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a member of this organization",
         )
+    # Checked after membership, not before: a non-member must never learn
+    # an organization's disabled status — the existing "organization_id
+    # never grants access by itself" invariant extends to this signal too.
+    if organization.disabled_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This organization has been disabled",
+        )
     return organization, membership
 
 
@@ -87,7 +95,12 @@ async def require_platform_admin(user: User = Depends(get_current_user)) -> User
 
     Independent of organization membership/roles — no MembershipRole,
     including OWNER, satisfies this. Platform-admin status grants no
-    access to any organization's tenant-scoped data.
+    access to any organization's message/conversation content,
+    system_prompt, or credential material — with one narrow, explicit
+    exception: the platform dashboard's aggregate/metadata-only reads
+    across organizations (app/api/v1/platform.py, architecture.md §8a),
+    gated by this exact dependency. No other route, and no other data
+    category, is affected.
     """
     if not user.is_platform_admin:
         raise HTTPException(
@@ -119,6 +132,13 @@ def require_organization_role(required_role: MembershipRole):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not a member of this organization",
+            )
+        # Checked after membership, not before: a non-member must never
+        # learn an organization's disabled status.
+        if organization.disabled_at is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This organization has been disabled",
             )
         if _ROLE_RANK.get(membership.role, 0) < _ROLE_RANK[required_role]:
             raise HTTPException(

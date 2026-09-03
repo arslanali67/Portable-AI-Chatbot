@@ -535,3 +535,35 @@ button.danger:hover:not(:disabled) {
   border-radius: var(--radius);
   background: #fff;
 }
+
+/* Platform-owner dashboard — deliberately distinct chrome (dark amber, not
+   the regular sidebar's near-black/blue) so it's never confusable with a
+   regular organization's admin console; this view crosses every tenant. */
+.sidebar-platform {
+  background: #451a03;
+}
+.sidebar-platform .sidebar-brand {
+  color: #fde68a;
+}
+.sidebar-platform .sidebar-nav a {
+  color: #fde68a;
+}
+.sidebar-platform .sidebar-nav a:hover {
+  background: #78350f;
+}
+.sidebar-platform .sidebar-nav a.active {
+  background: #b45309;
+  color: #fff;
+}
+.platform-banner {
+  background: #78350f;
+  color: #fde68a;
+  padding: 10px 32px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.badge-disabled-org {
+  background: #fee2e2;
+  color: #b91c1c;
+}

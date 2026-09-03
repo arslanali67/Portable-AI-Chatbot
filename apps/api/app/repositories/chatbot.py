@@ -13,7 +13,7 @@ visibility before any data is exposed. It is therefore safe by construction and
 must not be used by authenticated organization flows.
 """
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Chatbot
@@ -86,6 +86,18 @@ class ChatbotRepository:
             .order_by(Chatbot.id)
         )
         return list(result.scalars().all())
+
+    async def count_for_organizations(self, organization_ids: list[int]) -> dict[int, int]:
+        """Chatbot counts for many organizations in one query — platform
+        dashboard list view (app/services/platform.py), avoids N+1."""
+        if not organization_ids:
+            return {}
+        result = await self.db.execute(
+            select(Chatbot.organization_id, func.count())
+            .where(Chatbot.organization_id.in_(organization_ids))
+            .group_by(Chatbot.organization_id)
+        )
+        return dict(result.all())
 
     async def get_by_slug_for_organization(
         self, organization_id: int, slug: str

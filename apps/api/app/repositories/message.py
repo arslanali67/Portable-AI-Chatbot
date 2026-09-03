@@ -41,6 +41,18 @@ class MessageRepository:
         )
         return message
 
+    async def count_for_organization(self, organization_id: int) -> int:
+        """Aggregate message count for one organization — platform dashboard
+        detail view (app/services/platform.py) only; every other call site
+        stays conversation-scoped."""
+        total = await self.db.scalar(
+            select(func.count())
+            .select_from(Message)
+            .join(Conversation, Conversation.id == Message.conversation_id)
+            .where(Conversation.organization_id == organization_id)
+        )
+        return total or 0
+
     async def get_latest_sequence(self, conversation_id: int) -> int:
         latest = await self.db.scalar(
             select(func.max(Message.sequence_number)).where(

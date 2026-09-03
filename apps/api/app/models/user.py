@@ -17,8 +17,11 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     # Platform-level, non-tenant-scoped administration — orthogonal to
-    # MembershipRole. Grants no access to any organization's tenant-scoped
-    # data; only gates AI provider/model override mutation (ai_management).
+    # MembershipRole. Gates AI provider/model override mutation
+    # (ai_management) and the platform dashboard's read-only,
+    # aggregate/metadata-only cross-organization view + disable/enable
+    # (platform.py) — never message/conversation content, system_prompt,
+    # or credential material, for any organization.
     is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

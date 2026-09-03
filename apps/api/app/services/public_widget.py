@@ -14,9 +14,12 @@ from app.models.enums import ChatbotStatus, ChatbotVisibility
 from app.repositories.chatbot import ChatbotRepository
 from app.repositories.conversation import ConversationRepository
 from app.repositories.message import MessageRepository
+from app.repositories.organization import OrganizationRepository
 from app.repositories.user import UserRepository
 from app.repositories.widget import WidgetConfigRepository, WidgetSessionRepository
 from app.schemas.chat_runtime import ChatRequest
+
+_DISABLED_FALLBACK_MESSAGE = "This assistant is currently unavailable."
 
 
 class WidgetError(Exception):
@@ -38,6 +41,10 @@ class InvalidSessionError(WidgetError):
     pass
 
 
+class OrganizationDisabledError(WidgetError):
+    pass
+
+
 class PublicWidgetService:
     def __init__(self, db_session: AsyncSession):
         self.db = db_session
@@ -47,6 +54,17 @@ class PublicWidgetService:
         self.users = UserRepository(db_session)
         self.conversations = ConversationRepository(db_session)
         self.messages = MessageRepository(db_session)
+        self.organizations = OrganizationRepository(db_session)
+
+    async def _check_organization_enabled(self, organization_id: int) -> None:
+        """Never let a disabled organization's widget proceed to session
+        creation or chat/stream — shows the platform admin's configured
+        message, or a generic fallback if none was set."""
+        organization = await self.organizations.get(organization_id)
+        if organization is not None and organization.disabled_at is not None:
+            raise OrganizationDisabledError(
+                403, organization.disabled_message or _DISABLED_FALLBACK_MESSAGE
+            )
 
     async def _resolve_by_public_key(self, public_key: str) -> tuple[WidgetConfig, Chatbot]:
         config = await self.configs.get_by_public_key(public_key)
@@ -57,6 +75,7 @@ class PublicWidgetService:
         if chatbot is None or chatbot.status != ChatbotStatus.ACTIVE or chatbot.visibility != ChatbotVisibility.PUBLIC:
             raise PublicChatbotUnavailableError(404, "Chatbot not found")
 
+        await self._check_organization_enabled(chatbot.organization_id)
         return config, chatbot
 
     async def get_public_config(self, public_key: str) -> tuple[WidgetConfig, Chatbot]:
@@ -86,6 +105,7 @@ class PublicWidgetService:
         if chatbot is None or chatbot.status != ChatbotStatus.ACTIVE or chatbot.visibility != ChatbotVisibility.PUBLIC:
             raise PublicChatbotUnavailableError(404, "Chatbot not found")
 
+        await self._check_organization_enabled(chatbot.organization_id)
         self._check_origin(config, origin)
         session.last_seen_at = datetime.now(timezone.utc)
         await self.db.commit()

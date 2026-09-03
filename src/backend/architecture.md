@@ -131,6 +131,21 @@ request -> get_db() dependency -> AsyncSession (scoped to request)
 - Authorization checks membership for every organization access; knowing an `organization_id` never grants access by itself.
 - Current tenant is derived from the authenticated user's memberships — not from a JWT claim.
 
+## 8a. Platform-Owner Cross-Organization Dashboard
+
+The one deliberate exception to this section's tenant-isolation invariant: `GET /api/v1/platform/organizations` and `GET /api/v1/platform/organizations/{id}`, gated by `require_platform_admin()` (§15), grant a platform admin read access to every organization's metadata — something no other code path in this system does. Scope of the exception is narrow and explicit:
+
+- **Exposed** — list: `id`, `name`, `slug`, `created_at`, `owner_email` (derived from the `owner`-role membership), `member_count`, `chatbot_count`, `last_activity_at` (derived from `MAX(conversations.updated_at)`, nullable — no new usage-tracking infrastructure). Detail adds: member list (`email`, `role`, `joined_at`), chatbot list (`name`, `slug`, `status`, `created_at`), aggregate `message_count`.
+- **Never exposed** — message/conversation content, `system_prompt`, any BYOK credential material, tool-execution trace content.
+- `PlatformService` owns these queries, reading repositories/models directly for cross-org aggregates. It never calls into any existing service method that assumes single-org scoping — those services' trust boundary is unchanged by this feature's existence.
+
+### Disable / Enable
+
+- `organizations.disabled_at` (nullable timestamp) and `organizations.disabled_message` (nullable text, admin-configurable) — reversible, not one-way: `POST /api/v1/platform/organizations/{id}/disable` sets `disabled_at` (+ optional `disabled_message`); `POST .../enable` clears both back to `NULL`. Both `Depends(require_platform_admin)`.
+- **Admin-console enforcement**: `require_organization_role(...)` and `require_organization_membership` (`app/core/dependencies.py`) — the two dependencies every org-scoped route already funnels through — additionally 403 with a clear, generic message ("This organization has been disabled") when `organization.disabled_at IS NOT NULL`. Since both dependencies already re-fetch the `Organization` row on every call, this blocks an already-open session on its very next request — no separate session-invalidation mechanism needed.
+- **Public widget enforcement**: `app/api/v1/public_widget.py`'s org resolution path (`public_key → chatbot → organization`) checks `disabled_at` at both the config endpoint and the chat/stream endpoint (a visitor can hit either independently) — if disabled, responds with the organization's `disabled_message` if set, otherwise a generic fallback ("This assistant is currently unavailable."), and never proceeds to session creation or chat/stream.
+- Enabling restores all access immediately, at both the admin-console and public-widget paths — no residual disabled state anywhere once `disabled_at` is cleared.
+
 ## 9. Identity System
 
 ### Entities
@@ -645,7 +660,7 @@ Client → AI Management API → AIManagementService → ProviderRegistry / Mode
 
 - Providers/models are **platform infrastructure**; authenticated users may discover them.
 - Mutation is enable/disable only, never add/remove — new providers/models are still registered exclusively in code (`app/ai/registry.py`); the API can only toggle availability of what code already registers.
-- Mutation is gated by `require_platform_admin()`, a dependency independent of `require_organization_role` — no `MembershipRole`, including `OWNER`, satisfies it. Platform-admin status grants no access to any organization's tenant-scoped data.
+- Mutation is gated by `require_platform_admin()`, a dependency independent of `require_organization_role` — no `MembershipRole`, including `OWNER`, satisfies it. Platform-admin status grants no access to any organization's message/conversation content, `system_prompt`, or credential material — with one narrow, explicit exception: the platform dashboard's aggregate/metadata-only reads across organizations (§8a), via `require_platform_admin()`-gated endpoints only. No other route, and no other data category, is affected.
 
 ### Platform Admin Mutation
 

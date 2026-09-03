@@ -19,6 +19,9 @@ import type {
   Organization,
   OrganizationCreate,
   OrganizationUpdate,
+  PlatformOrganizationDetail,
+  PlatformOrganizationList,
+  PlatformOrganizationSummary,
   Provider,
   StreamEvent,
   TokenResponse,
@@ -468,6 +471,31 @@ export const api = {
     return request<KnowledgeSearchResult>(
       `/api/v1/organizations/${orgId}/chatbots/${chatbotId}/knowledge/search`,
       { method: "POST", ...jsonBody({ query, top_k: topK }) },
+    );
+  },
+
+  // Platform-owner dashboard (platform-admin only, cross-organization)
+  listPlatformOrganizations(limit = 50, offset = 0): Promise<PlatformOrganizationList> {
+    return request<PlatformOrganizationList>(
+      `/api/v1/platform/organizations?limit=${limit}&offset=${offset}`,
+    );
+  },
+  getPlatformOrganization(orgId: number): Promise<PlatformOrganizationDetail> {
+    return request<PlatformOrganizationDetail>(`/api/v1/platform/organizations/${orgId}`);
+  },
+  disablePlatformOrganization(
+    orgId: number,
+    message: string | null,
+  ): Promise<PlatformOrganizationSummary> {
+    return request<PlatformOrganizationSummary>(
+      `/api/v1/platform/organizations/${orgId}/disable`,
+      { method: "POST", ...jsonBody({ message }) },
+    );
+  },
+  enablePlatformOrganization(orgId: number): Promise<PlatformOrganizationSummary> {
+    return request<PlatformOrganizationSummary>(
+      `/api/v1/platform/organizations/${orgId}/enable`,
+      { method: "POST" },
     );
   },
 };

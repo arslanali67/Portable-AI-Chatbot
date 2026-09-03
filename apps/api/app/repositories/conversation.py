@@ -1,5 +1,7 @@
 """Conversation repository — tenant-scoped data access."""
 
+from datetime import datetime
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +11,21 @@ from app.models import Conversation
 class ConversationRepository:
     def __init__(self, db_session: AsyncSession):
         self.db = db_session
+
+    async def last_activity_for_organizations(
+        self, organization_ids: list[int]
+    ) -> dict[int, datetime]:
+        """Most recent conversation activity for many organizations in one
+        query — platform dashboard list view (app/services/platform.py),
+        avoids N+1. Omits an organization with zero conversations."""
+        if not organization_ids:
+            return {}
+        result = await self.db.execute(
+            select(Conversation.organization_id, func.max(Conversation.updated_at))
+            .where(Conversation.organization_id.in_(organization_ids))
+            .group_by(Conversation.organization_id)
+        )
+        return dict(result.all())
 
     async def create(
         self, *, organization_id: int, chatbot_id: int, user_id: int, title: str

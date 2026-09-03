@@ -17,6 +17,9 @@ export default function AppLayout() {
             Organizations
           </NavLink>
           <NavLink to="/providers">AI Providers</NavLink>
+          {user?.is_platform_admin && (
+            <NavLink to="/platform-admin">Platform Admin</NavLink>
+          )}
         </nav>
         <div className="sidebar-footer">
           {user && <div className="user-chip">{user.full_name}</div>}

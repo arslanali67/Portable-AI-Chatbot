@@ -2,7 +2,9 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { AuthProvider } from "./auth/AuthContext";
 import { RequireAuth } from "./components/RequireAuth";
+import { RequirePlatformAdmin } from "./components/RequirePlatformAdmin";
 import AppLayout from "./layout/AppLayout";
+import PlatformAdminLayout from "./layout/PlatformAdminLayout";
 import ChatbotDetailPage from "./pages/ChatbotDetailPage";
 import ChatbotsPage from "./pages/ChatbotsPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -10,6 +12,8 @@ import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import LoginPage from "./pages/LoginPage";
 import OrganizationsPage from "./pages/OrganizationsPage";
 import OrganizationSettingsPage from "./pages/OrganizationSettingsPage";
+import PlatformOrganizationDetailPage from "./pages/PlatformOrganizationDetailPage";
+import PlatformOrganizationsPage from "./pages/PlatformOrganizationsPage";
 import ProvidersPage from "./pages/ProvidersPage";
 import RegisterPage from "./pages/RegisterPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
@@ -48,6 +52,19 @@ export default function App() {
             />
             <Route path="/organizations/:organizationId/chatbots/:chatbotId/*" element={<ChatbotDetailPage />} />
             <Route path="/providers" element={<ProvidersPage />} />
+          </Route>
+          <Route
+            element={
+              <RequirePlatformAdmin>
+                <PlatformAdminLayout />
+              </RequirePlatformAdmin>
+            }
+          >
+            <Route path="/platform-admin" element={<PlatformOrganizationsPage />} />
+            <Route
+              path="/platform-admin/organizations/:organizationId"
+              element={<PlatformOrganizationDetailPage />}
+            />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

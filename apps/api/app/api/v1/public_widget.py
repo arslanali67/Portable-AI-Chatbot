@@ -26,6 +26,7 @@ from app.services.chat_runtime import (
 )
 from app.services.public_widget import (
     InvalidSessionError,
+    OrganizationDisabledError,
     OriginDeniedError,
     PublicChatbotUnavailableError,
     PublicWidgetService,
@@ -75,6 +76,8 @@ async def get_public_config(
         config, chatbot = await PublicWidgetService(db).get_public_config(public_key)
     except PublicChatbotUnavailableError as exc:
         raise _widget_error(exc)
+    except OrganizationDisabledError as exc:
+        raise _widget_error(exc)
     return _build_config_response(chatbot, config)
 
 
@@ -90,6 +93,8 @@ async def create_session(
             payload.public_key, origin
         )
     except PublicChatbotUnavailableError as exc:
+        raise _widget_error(exc)
+    except OrganizationDisabledError as exc:
         raise _widget_error(exc)
     except OriginDeniedError as exc:
         raise _widget_error(exc)
@@ -152,6 +157,8 @@ async def stream_chat(
         except InvalidSessionError as exc:
             yield f"event: error\ndata: {json.dumps({'detail': exc.detail})}\n\n"
         except PublicChatbotUnavailableError as exc:
+            yield f"event: error\ndata: {json.dumps({'detail': exc.detail})}\n\n"
+        except OrganizationDisabledError as exc:
             yield f"event: error\ndata: {json.dumps({'detail': exc.detail})}\n\n"
         except OriginDeniedError as exc:
             yield f"event: error\ndata: {json.dumps({'detail': exc.detail})}\n\n"

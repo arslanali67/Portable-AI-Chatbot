@@ -53,6 +53,33 @@ class MembershipRepository:
         )
         return [(membership, email, full_name) for membership, email, full_name in result.all()]
 
+    async def count_for_organizations(self, organization_ids: list[int]) -> dict[int, int]:
+        """Member counts for many organizations in one query — platform
+        dashboard list view (app/services/platform.py), avoids N+1."""
+        if not organization_ids:
+            return {}
+        result = await self.db.execute(
+            select(Membership.organization_id, func.count())
+            .where(Membership.organization_id.in_(organization_ids))
+            .group_by(Membership.organization_id)
+        )
+        return dict(result.all())
+
+    async def owner_emails_for_organizations(self, organization_ids: list[int]) -> dict[int, str]:
+        """Owner-role member's email for many organizations in one query —
+        platform dashboard list view, avoids N+1."""
+        if not organization_ids:
+            return {}
+        result = await self.db.execute(
+            select(Membership.organization_id, User.email)
+            .join(User, User.id == Membership.user_id)
+            .where(
+                Membership.organization_id.in_(organization_ids),
+                Membership.role == MembershipRole.OWNER,
+            )
+        )
+        return dict(result.all())
+
     async def count_owners(self, organization_id: int) -> int:
         result = await self.db.execute(
             select(func.count())
