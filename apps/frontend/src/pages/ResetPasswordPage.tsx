@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 
 import { api } from "../api/client";
 import { errorMessage } from "../auth/AuthContext";
+import { PASSWORD_COMPLEXITY_MESSAGE, isPasswordComplex } from "../auth/passwordPolicy";
 
 export default function ResetPasswordPage() {
   const [searchParams] = useSearchParams();
@@ -13,10 +14,17 @@ export default function ResetPasswordPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
+  const passwordValid = newPassword.length === 0 || isPasswordComplex(newPassword);
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (!token) return;
     setError(null);
+    if (!isPasswordComplex(newPassword)) {
+      // The inline hint below the password field already turns red and
+      // states this — no need to duplicate it into the generic error box.
+      return;
+    }
     setSubmitting(true);
     try {
       await api.confirmPasswordReset(token, newPassword);
@@ -51,6 +59,7 @@ export default function ResetPasswordPage() {
                 autoComplete="new-password"
               />
             </label>
+            <p className={passwordValid ? "muted small" : "error-box"}>{PASSWORD_COMPLEXITY_MESSAGE}</p>
             {error && <div className="error-box">{error}</div>}
             <button type="submit" disabled={submitting}>
               {submitting ? "Resetting…" : "Reset password"}

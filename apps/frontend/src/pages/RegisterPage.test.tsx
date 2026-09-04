@@ -69,7 +69,7 @@ async function fillForm() {
   const user = userEvent.setup();
   await user.type(screen.getByLabelText("Full name"), "New User");
   await user.type(screen.getByLabelText("Email"), "new@example.com");
-  await user.type(screen.getByLabelText("Password"), "password123");
+  await user.type(screen.getByLabelText("Password"), "Password123!");
 }
 
 beforeEach(() => {
@@ -193,5 +193,41 @@ describe("RegisterPage", () => {
     expect(registerCalls).toBe(1);
 
     resolveRegister(jsonResponse(201, USER));
+  });
+
+  it("shows the complexity hint as an error and blocks submit for a weak password", async () => {
+    route();
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(screen.getByLabelText("Full name"), "New User");
+    await user.type(screen.getByLabelText("Email"), "new@example.com");
+    await user.type(screen.getByLabelText("Password"), "weakpassword");
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+
+    await screen.findByText(
+      "Password must contain at least one uppercase letter and one special character",
+    );
+    expect(calls("/api/v1/auth/register")).toHaveLength(0);
+  });
+
+  it("submits normally once the password satisfies the complexity rule", async () => {
+    route();
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(screen.getByLabelText("Full name"), "New User");
+    await user.type(screen.getByLabelText("Email"), "new@example.com");
+    await user.type(screen.getByLabelText("Password"), "weakpassword");
+    // Still-weak hint shows red while typing an incomplete password...
+    await screen.findByText(
+      "Password must contain at least one uppercase letter and one special character",
+    );
+    // ...then satisfying the rule clears it and a normal submit proceeds.
+    await user.type(screen.getByLabelText("Password"), "-A1");
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+
+    await screen.findByText("Home");
+    expect(calls("/api/v1/auth/register")).toHaveLength(1);
   });
 });

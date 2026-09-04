@@ -24,7 +24,7 @@ pytestmark = pytest.mark.identity
 
 client = TestClient(app)
 
-PASSWORD = "strong-password-123"
+PASSWORD = "Strong-password-123"
 
 # Unique suffix so re-runs never collide with leftover rows.
 _RUN = uuid.uuid4().hex[:8]
@@ -94,6 +94,33 @@ def test_duplicate_email_rejected() -> None:
     _register(email=email, full_name="Dup One")
     response = _register(email=email, full_name="Dup Two")
     assert response.status_code == 409
+
+
+# --- Password complexity: at least 1 uppercase + 1 special char (on top of
+# the existing min_length=8) — applies to every NEW password being set. ---
+
+
+def test_register_password_missing_uppercase_rejected() -> None:
+    response = _register(email=_email("pwnoupper"), password="lowercase-only1!")
+    assert response.status_code == 422
+    assert "uppercase" in response.text and "special character" in response.text
+
+
+def test_register_password_missing_special_char_rejected() -> None:
+    response = _register(email=_email("pwnospecial"), password="NoSpecialChar123")
+    assert response.status_code == 422
+    assert "uppercase" in response.text and "special character" in response.text
+
+
+def test_register_password_missing_both_rejected() -> None:
+    response = _register(email=_email("pwneither"), password="alllowercase123")
+    assert response.status_code == 422
+    assert "uppercase" in response.text and "special character" in response.text
+
+
+def test_register_password_valid_accepted() -> None:
+    response = _register(email=_email("pwvalid"), password="Valid-password123!")
+    assert response.status_code == 201
 
 
 @pytest.mark.asyncio

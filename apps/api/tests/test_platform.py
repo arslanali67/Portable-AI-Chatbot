@@ -22,7 +22,7 @@ pytestmark = pytest.mark.identity
 
 client = TestClient(app)
 
-PASSWORD = "strong-password-123"
+PASSWORD = "Strong-password-123"
 _RUN = uuid.uuid4().hex[:8]
 
 _FORBIDDEN_CONTENT_MARKERS = [

@@ -18,7 +18,7 @@ pytestmark = pytest.mark.identity
 
 client = TestClient(app)
 
-PASSWORD = "strong-password-123"
+PASSWORD = "Strong-password-123"
 _RUN = uuid.uuid4().hex[:8]
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"fake but correctly-signed png payload"

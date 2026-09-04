@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.security import generate_token, hash_token
+from app.core.security import generate_token, hash_password, hash_token
 from app.main import app
 from app.models import PasswordResetToken, User
 from tests.conftest import TestSessionLocal
@@ -20,7 +20,7 @@ pytestmark = pytest.mark.identity
 
 client = TestClient(app)
 
-PASSWORD = "strong-password-123"
+PASSWORD = "Strong-password-123"
 REFRESH_COOKIE = "portableai_refresh_token"
 _RUN = uuid.uuid4().hex[:8]
 
@@ -245,7 +245,7 @@ def test_password_reset_request_email_contains_recipient_and_a_working_raw_token
     # actually completing a reset with it.
     confirm = client.post(
         "/api/v1/auth/password-reset/confirm",
-        json={"token": raw_token, "new_password": "brand-new-password-456"},
+        json={"token": raw_token, "new_password": "Brand-new-password-456"},
     )
     assert confirm.status_code == 204
 
@@ -294,7 +294,7 @@ def test_password_reset_confirm_succeeds_sets_password_and_revokes_sessions() ->
     old_refresh = login_resp.cookies.get(REFRESH_COOKIE)
 
     raw_reset = asyncio.run(_insert_reset_token(user["id"]))
-    new_password = "brand-new-password-456"
+    new_password = "Brand-new-password-456"
     confirm = client.post(
         "/api/v1/auth/password-reset/confirm",
         json={"token": raw_reset, "new_password": new_password},
@@ -322,7 +322,7 @@ def test_password_reset_confirm_rejects_expired_token() -> None:
 
     r = client.post(
         "/api/v1/auth/password-reset/confirm",
-        json={"token": raw_reset, "new_password": "whatever-new-pass"},
+        json={"token": raw_reset, "new_password": "Whatever-new-pass1"},
     )
     assert r.status_code == 400
 
@@ -334,7 +334,7 @@ def test_password_reset_confirm_rejects_already_used_token() -> None:
 
     r = client.post(
         "/api/v1/auth/password-reset/confirm",
-        json={"token": raw_reset, "new_password": "whatever-new-pass"},
+        json={"token": raw_reset, "new_password": "Whatever-new-pass1"},
     )
     assert r.status_code == 400
 
@@ -342,6 +342,91 @@ def test_password_reset_confirm_rejects_already_used_token() -> None:
 def test_password_reset_confirm_rejects_unknown_token() -> None:
     r = client.post(
         "/api/v1/auth/password-reset/confirm",
-        json={"token": "not-a-real-token", "new_password": "whatever-new-pass"},
+        json={"token": "not-a-real-token", "new_password": "Whatever-new-pass1"},
     )
     assert r.status_code == 400
+
+
+# --- Password complexity on reset confirm: same rule as registration ---
+
+
+def test_password_reset_confirm_missing_uppercase_rejected() -> None:
+    email = _email("resetpwnoupper")
+    user = _register(email)
+    raw_reset = asyncio.run(_insert_reset_token(user["id"]))
+    r = client.post(
+        "/api/v1/auth/password-reset/confirm",
+        json={"token": raw_reset, "new_password": "lowercase-only1!"},
+    )
+    assert r.status_code == 422
+    assert "uppercase" in r.text and "special character" in r.text
+
+
+def test_password_reset_confirm_missing_special_char_rejected() -> None:
+    email = _email("resetpwnospecial")
+    user = _register(email)
+    raw_reset = asyncio.run(_insert_reset_token(user["id"]))
+    r = client.post(
+        "/api/v1/auth/password-reset/confirm",
+        json={"token": raw_reset, "new_password": "NoSpecialChar123"},
+    )
+    assert r.status_code == 422
+    assert "uppercase" in r.text and "special character" in r.text
+
+
+def test_password_reset_confirm_missing_both_rejected() -> None:
+    email = _email("resetpwneither")
+    user = _register(email)
+    raw_reset = asyncio.run(_insert_reset_token(user["id"]))
+    r = client.post(
+        "/api/v1/auth/password-reset/confirm",
+        json={"token": raw_reset, "new_password": "alllowercase123"},
+    )
+    assert r.status_code == 422
+    assert "uppercase" in r.text and "special character" in r.text
+
+
+def test_password_reset_confirm_valid_password_accepted() -> None:
+    email = _email("resetpwvalid")
+    user = _register(email)
+    raw_reset = asyncio.run(_insert_reset_token(user["id"]))
+    r = client.post(
+        "/api/v1/auth/password-reset/confirm",
+        json={"token": raw_reset, "new_password": "Valid-password123!"},
+    )
+    assert r.status_code == 204
+
+
+# --- Login with a pre-existing (pre-rule) password hash is unaffected ---
+
+
+async def _insert_legacy_user(email: str, legacy_password: str) -> None:
+    """Directly inserts a user with a password hash from BEFORE the
+    complexity rule existed — bypasses RegisterRequest entirely, exactly
+    as a real pre-existing account in the database would look."""
+    async with TestSessionLocal() as session:
+        user = User(
+            email=email.lower(),
+            password_hash=hash_password(legacy_password),
+            full_name="Legacy User",
+            is_active=True,
+        )
+        session.add(user)
+        await session.commit()
+
+
+def test_login_with_pre_existing_weak_password_hash_still_works() -> None:
+    """Regression proof: this rule only applies to NEW passwords being
+    set (register, reset-confirm) — LoginRequest has no complexity
+    validator, so an account created before this rule shipped, with a
+    password that would now be rejected outright, must still be able to
+    log in with its original (weak) password."""
+    email = _email("legacyweak")
+    legacy_password = "alllowercase123"  # no uppercase, no special char
+    asyncio.run(_insert_legacy_user(email, legacy_password))
+
+    r = client.post(
+        "/api/v1/auth/login", data={"username": email, "password": legacy_password}
+    )
+    assert r.status_code == 200, r.text
+    assert "access_token" in r.json()

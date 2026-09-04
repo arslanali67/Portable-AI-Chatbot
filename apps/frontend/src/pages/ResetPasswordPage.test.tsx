@@ -66,7 +66,7 @@ describe("ResetPasswordPage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.type(screen.getByLabelText("New password"), "brand-new-password-456");
+    await user.type(screen.getByLabelText("New password"), "Brand-new-password-456");
     await user.click(screen.getByRole("button", { name: "Reset password" }));
 
     await screen.findByText(/Password updated/);
@@ -74,7 +74,7 @@ describe("ResetPasswordPage", () => {
       String(c[0]).endsWith("/password-reset/confirm"),
     )!;
     expect(String(init?.body)).toContain('"token":"abc123"');
-    expect(String(init?.body)).toContain('"new_password":"brand-new-password-456"');
+    expect(String(init?.body)).toContain('"new_password":"Brand-new-password-456"');
     expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/login");
   });
 
@@ -83,7 +83,7 @@ describe("ResetPasswordPage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.type(screen.getByLabelText("New password"), "brand-new-password-456");
+    await user.type(screen.getByLabelText("New password"), "Brand-new-password-456");
     await user.click(screen.getByRole("button", { name: "Reset password" }));
 
     await screen.findByText("Invalid or expired token");
@@ -101,12 +101,42 @@ describe("ResetPasswordPage", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.type(screen.getByLabelText("New password"), "brand-new-password-456");
+    await user.type(screen.getByLabelText("New password"), "Brand-new-password-456");
     await user.click(screen.getByRole("button", { name: "Reset password" }));
 
     expect(screen.getByRole("button", { name: "Resetting…" })).toBeDisabled();
 
     resolveRequest(jsonResponse(204, null));
     await screen.findByText(/Password updated/);
+  });
+
+  it("shows the complexity hint as an error and blocks submit for a weak password", async () => {
+    route();
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(screen.getByLabelText("New password"), "weakpassword");
+    await user.click(screen.getByRole("button", { name: "Reset password" }));
+
+    await screen.findByText(
+      "Password must contain at least one uppercase letter and one special character",
+    );
+    expect(
+      fetchMock.mock.calls.some((c) => String(c[0]).endsWith("/password-reset/confirm")),
+    ).toBe(false);
+  });
+
+  it("submits normally once the password satisfies the complexity rule", async () => {
+    route();
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(screen.getByLabelText("New password"), "Weak-password1");
+    await user.click(screen.getByRole("button", { name: "Reset password" }));
+
+    await screen.findByText(/Password updated/);
+    expect(
+      fetchMock.mock.calls.some((c) => String(c[0]).endsWith("/password-reset/confirm")),
+    ).toBe(true);
   });
 });

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { errorMessage, useAuth } from "../auth/AuthContext";
+import { PASSWORD_COMPLEXITY_MESSAGE, isPasswordComplex } from "../auth/passwordPolicy";
 
 export default function RegisterPage() {
   const { register } = useAuth();
@@ -12,9 +13,16 @@ export default function RegisterPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const passwordValid = password.length === 0 || isPasswordComplex(password);
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!isPasswordComplex(password)) {
+      // The inline hint below the password field already turns red and
+      // states this — no need to duplicate it into the generic error box.
+      return;
+    }
     setSubmitting(true);
     try {
       await register(email, password, fullName);
@@ -61,6 +69,7 @@ export default function RegisterPage() {
             autoComplete="new-password"
           />
         </label>
+        <p className={passwordValid ? "muted small" : "error-box"}>{PASSWORD_COMPLEXITY_MESSAGE}</p>
         {error && <div className="error-box">{error}</div>}
         <button type="submit" disabled={submitting}>
           {submitting ? "Creating…" : "Create account"}
