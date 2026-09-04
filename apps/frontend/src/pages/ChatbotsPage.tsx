@@ -3,7 +3,9 @@ import { Link, useParams } from "react-router-dom";
 
 import { api } from "../api/client";
 import { errorMessage } from "../auth/AuthContext";
-import type { Chatbot, ModelInfo, Provider } from "../api/types";
+import type { Chatbot, ModelInfo, PresetQuestion, Provider } from "../api/types";
+
+const MAX_PRESET_QUESTIONS = 10;
 
 const LANGUAGE_OPTIONS = ["en", "ur"];
 
@@ -37,6 +39,9 @@ export default function ChatbotsPage() {
   const [responseSchemaText, setResponseSchemaText] = useState("");
   // Empty string = unset (NULL/empty) -> no tools, today's behavior unchanged.
   const [toolsText, setToolsText] = useState("");
+  // Structured add/remove-row UI, not raw JSON -- FAQ authoring's admin
+  // audience is less likely to be JSON-literate than tools/response_schema's.
+  const [presetQuestions, setPresetQuestions] = useState<PresetQuestion[]>([]);
 
   // Tracks in-flight mutations by a stable key (e.g. "save", "activate:12").
   // The ref guards against duplicate submissions synchronously (before React
@@ -106,6 +111,21 @@ export default function ChatbotsPage() {
     setRagTopK("");
     setResponseSchemaText("");
     setToolsText("");
+    setPresetQuestions([]);
+  }
+
+  function addPresetQuestionRow() {
+    setPresetQuestions((prev) =>
+      prev.length >= MAX_PRESET_QUESTIONS ? prev : [...prev, { question: "", answer: "" }],
+    );
+  }
+
+  function removePresetQuestionRow(index: number) {
+    setPresetQuestions((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function updatePresetQuestionField(index: number, field: "question" | "answer", value: string) {
+    setPresetQuestions((prev) => prev.map((pq, i) => (i === index ? { ...pq, [field]: value } : pq)));
   }
 
   function openCreate() {
@@ -133,6 +153,7 @@ export default function ChatbotsPage() {
     setToolsText(
       bot.tools === null || bot.tools.length === 0 ? "" : JSON.stringify(bot.tools, null, 2),
     );
+    setPresetQuestions(bot.preset_questions ?? []);
     setShowCreate(true);
   }
 
@@ -165,6 +186,7 @@ export default function ChatbotsPage() {
     }
     setError(null);
     const ragTopKValue = ragTopK === "" ? null : Number(ragTopK);
+    const presetQuestionsValue = presetQuestions.length > 0 ? presetQuestions : null;
     try {
       if (editing) {
         await api.updateChatbot(orgId, editing.id, {
@@ -181,6 +203,7 @@ export default function ChatbotsPage() {
           rag_top_k: ragTopKValue,
           response_schema: responseSchemaValue,
           tools: toolsValue,
+          preset_questions: presetQuestionsValue,
         });
       } else {
         await api.createChatbot(orgId, {
@@ -197,6 +220,7 @@ export default function ChatbotsPage() {
           rag_top_k: ragTopKValue,
           response_schema: responseSchemaValue,
           tools: toolsValue,
+          preset_questions: presetQuestionsValue,
         });
       }
       setShowCreate(false);
@@ -403,6 +427,43 @@ export default function ChatbotsPage() {
                 rows={6}
               />
             </label>
+            <div className="full">
+              <label>Preset/FAQ questions ({presetQuestions.length}/{MAX_PRESET_QUESTIONS})</label>
+              {presetQuestions.map((pq, i) => (
+                <div key={i} className="preset-question-row">
+                  <input
+                    placeholder="Question"
+                    value={pq.question}
+                    onChange={(e) => updatePresetQuestionField(i, "question", e.target.value)}
+                    maxLength={200}
+                    required
+                  />
+                  <textarea
+                    placeholder="Answer"
+                    value={pq.answer}
+                    onChange={(e) => updatePresetQuestionField(i, "answer", e.target.value)}
+                    maxLength={2000}
+                    rows={2}
+                    required
+                  />
+                  <button
+                    type="button"
+                    className="link-button danger"
+                    onClick={() => removePresetQuestionRow(i)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                className="secondary"
+                onClick={addPresetQuestionRow}
+                disabled={presetQuestions.length >= MAX_PRESET_QUESTIONS}
+              >
+                Add question
+              </button>
+            </div>
           </div>
           <div className="form-actions">
             <button type="submit" disabled={saving}>

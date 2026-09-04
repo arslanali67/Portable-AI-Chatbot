@@ -53,6 +53,10 @@ class Chatbot(Base):
     # "parameters"} tool definitions. NULL/empty (default) keeps today's
     # behavior unchanged — the platform never executes a tool.
     tools: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    # Preset/FAQ questions: optional list of {"question", "answer"} pairs,
+    # admin-authored canned responses suggested to visitors/users. NULL
+    # (default) keeps today's behavior unchanged — no suggestions shown.
+    preset_questions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

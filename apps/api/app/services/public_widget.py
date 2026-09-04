@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models import Chatbot, User, WidgetConfig, WidgetSession
+from app.models import Chatbot, Conversation, User, WidgetConfig, WidgetSession
 from app.models.enums import ChatbotStatus, ChatbotVisibility
 from app.repositories.chatbot import ChatbotRepository
 from app.repositories.conversation import ConversationRepository
@@ -136,6 +136,28 @@ class PublicWidgetService:
         )
         await self.db.commit()
         await self.db.refresh(conversation)
+        return conversation
+
+    async def ensure_conversation_for_session(
+        self, session: WidgetSession, chatbot: Chatbot
+    ) -> Conversation:
+        """Lazily creates the session's conversation on first use — shared
+        by chat/stream and the FAQ canned-response route, whichever a given
+        session happens to use first. Defense-in-depth: a session may only
+        ever resolve to a conversation bound to its own chatbot."""
+        organization_id = chatbot.organization_id
+        if session.conversation_id is None:
+            placeholder_user = await self.get_or_create_placeholder_user(organization_id)
+            conversation = await self.ensure_conversation(
+                organization_id, session.chatbot_id, placeholder_user
+            )
+            session.conversation_id = conversation.id
+            await self.db.commit()
+        else:
+            conversation = await self.db.get(Conversation, session.conversation_id)
+
+        if conversation is None or conversation.chatbot_id != session.chatbot_id:
+            raise InvalidSessionError(403, "Invalid session")
         return conversation
 
     @staticmethod

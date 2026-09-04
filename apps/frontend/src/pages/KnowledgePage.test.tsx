@@ -49,17 +49,27 @@ function listResponse(items: unknown[]) {
   return jsonResponse(200, { items, total: items.length });
 }
 
+const CRAWL_SUMMARY = {
+  documents: [DOC_B],
+  pages_fetched: 3,
+  pages_ingested: 2,
+  pages_skipped: 1,
+  pages_failed: 0,
+  stopped_reason: "exhausted",
+};
+
 interface RouteOverrides {
   get?: Response;
   postText?: Response;
   postUrl?: Response;
   postFile?: Response;
+  postCrawl?: Response;
   del?: Response;
   search?: Response;
 }
 
 function route(overrides: RouteOverrides = {}) {
-  const { get, postText, postUrl, postFile, del, search } = overrides;
+  const { get, postText, postUrl, postFile, postCrawl, del, search } = overrides;
   fetchMock.mockImplementation(async (input, init) => {
     const path = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
@@ -68,6 +78,9 @@ function route(overrides: RouteOverrides = {}) {
     }
     if (path.endsWith("/knowledge/documents/file")) {
       return postFile ?? jsonResponse(201, DOC_B);
+    }
+    if (path.endsWith("/knowledge/documents/crawl")) {
+      return postCrawl ?? jsonResponse(201, CRAWL_SUMMARY);
     }
     if (path.endsWith("/knowledge/documents/url")) {
       return postUrl ?? jsonResponse(201, DOC_B);
@@ -234,6 +247,48 @@ describe("KnowledgePage", () => {
         ),
       ).toBe(true),
     );
+  });
+
+  it("crawls a website and shows a loading state, then the summary on completion", async () => {
+    let resolveCrawl!: (response: Response) => void;
+    route({ get: listResponse([]) });
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path.endsWith("/knowledge/documents/crawl")) {
+        return new Promise<Response>((resolve) => { resolveCrawl = resolve; });
+      }
+      if ((init?.method ?? "GET").toUpperCase() === "GET" && path.endsWith("/knowledge/documents")) {
+        return listResponse([]);
+      }
+      return jsonResponse(404, { detail: "Not found" });
+    });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText(/No documents yet/);
+
+    const crawlPanel = screen.getByText("Crawl website", { selector: "h3" }).closest(
+      "form",
+    ) as HTMLElement;
+    await user.type(
+      within(crawlPanel).getByPlaceholderText("https://example.com"),
+      "https://example.com",
+    );
+    await user.click(within(crawlPanel).getByRole("button", { name: "Crawl website" }));
+
+    await screen.findByText(/Crawling…/);
+    expect(screen.getByText(/can take up to two minutes/)).toBeInTheDocument();
+
+    resolveCrawl(jsonResponse(201, CRAWL_SUMMARY));
+
+    await screen.findByText(/Crawled 3 page\(s\): 2 added, 1 skipped \(duplicate\), 0 failed\. Stopped: exhausted\./);
+    expect(
+      fetchMock.mock.calls.some(
+        (c) =>
+          String(c[0]).endsWith("/knowledge/documents/crawl") &&
+          String(c[1]?.body).includes('"url":"https://example.com"'),
+      ),
+    ).toBe(true);
   });
 
   it("uploads a file via multipart FormData once a file is chosen", async () => {

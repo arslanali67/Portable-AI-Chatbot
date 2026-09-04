@@ -129,6 +129,12 @@ class Settings(BaseSettings):
     url_user_agent: str = "PortableAI-KnowledgeBot/0.1"
     url_respect_robots: bool = True
 
+    # Bounded same-domain crawl ingestion
+    max_crawl_pages: int = 50
+    max_crawl_depth: int = 3
+    crawl_time_budget_seconds: float = 120.0
+    crawl_rate_limit_per_hour: int = 5
+
     # Public widget
     widget_session_ttl_hours: int = 24
     widget_rate_limit_messages: int = 30

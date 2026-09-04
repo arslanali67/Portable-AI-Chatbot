@@ -4,7 +4,7 @@ import { useParams } from "react-router-dom";
 import { api, streamChat } from "../api/client";
 import { errorMessage } from "../auth/AuthContext";
 import MessageMarkdown from "../components/MessageMarkdown";
-import type { Conversation, Message } from "../api/types";
+import type { Chatbot, Conversation, Message } from "../api/types";
 
 export default function ChatConsolePage() {
   const { organizationId, chatbotId } = useParams<{
@@ -14,6 +14,7 @@ export default function ChatConsolePage() {
   const orgId = Number(organizationId);
   const botId = Number(chatbotId);
 
+  const [chatbot, setChatbot] = useState<Chatbot | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -75,6 +76,10 @@ function nextClientMessageId(): number {
   }, [orgId, botId]);
 
   useEffect(loadConversations, [loadConversations]);
+
+  useEffect(() => {
+    api.getChatbot(orgId, botId).then(setChatbot).catch(() => {});
+  }, [orgId, botId]);
 
   useEffect(() => {
     if (!selected) {
@@ -159,6 +164,47 @@ function nextClientMessageId(): number {
       setError(errorMessage(err));
     } finally {
       endPending(key);
+    }
+  }
+
+  // Canned-response click: renders the question+answer bubble pair
+  // instantly from the chatbot config already loaded (no waiting on the
+  // network), then persists it in the background so a later real chat
+  // message has full conversation context. Chips are never hidden after
+  // use.
+  async function askPresetQuestion(index: number) {
+    const preset = chatbot?.preset_questions?.[index];
+    if (!selected || !preset) {
+      return;
+    }
+    const userTempId = nextClientMessageId();
+    const assistantTempId = nextClientMessageId();
+    const now = new Date().toISOString();
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: userTempId,
+        conversation_id: selected,
+        role: "user",
+        content: preset.question,
+        sequence_number: prev.length + 1,
+        metadata: null,
+        created_at: now,
+      },
+      {
+        id: assistantTempId,
+        conversation_id: selected,
+        role: "assistant",
+        content: preset.answer,
+        sequence_number: prev.length + 2,
+        metadata: null,
+        created_at: now,
+      },
+    ]);
+    try {
+      await api.answerPresetQuestion(orgId, selected, index);
+    } catch (err) {
+      setError(errorMessage(err));
     }
   }
 
@@ -380,6 +426,20 @@ function nextClientMessageId(): number {
                 </div>
               ))}
             </div>
+            {!selectedIsArchived && chatbot?.preset_questions && chatbot.preset_questions.length > 0 && (
+              <div className="preset-questions">
+                {chatbot.preset_questions.map((pq, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    className="chip"
+                    onClick={() => askPresetQuestion(i)}
+                  >
+                    {pq.question}
+                  </button>
+                ))}
+              </div>
+            )}
             {selectedIsArchived ? (
               <p className="muted small">This conversation is archived and can't receive new messages.</p>
             ) : (

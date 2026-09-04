@@ -109,6 +109,8 @@
   panel.appendChild(form);
 
   var open = false;
+  var presetQuestions = [];
+  var chipsRendered = false;
 
   function renderMessage(role, text) {
     var div = document.createElement("div");
@@ -446,10 +448,79 @@
       });
   }
 
+  // Preset/FAQ question chips: rendered from the eager config fetch, as
+  // soon as the panel first opens -- independent of session/message state,
+  // like theme already is. Idempotent (chipsRendered guard) so it's safe
+  // to call both from here and from the config fetch's own callback below,
+  // whichever resolves last.
+  function renderPresetChips() {
+    if (chipsRendered || presetQuestions.length === 0) {
+      return;
+    }
+    chipsRendered = true;
+    var container = document.createElement("div");
+    container.id = "portableai-preset-questions";
+    container.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;padding:0 12px 8px;";
+    presetQuestions.forEach(function (pq, index) {
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.textContent = pq.question;
+      chip.style.cssText =
+        "padding:6px 10px;border:1px solid #2563eb;border-radius:16px;background:#fff;color:#2563eb;font-size:12px;cursor:pointer;";
+      chip.addEventListener("click", function () {
+        askPresetQuestion(index);
+      });
+      container.appendChild(chip);
+    });
+    panel.insertBefore(container, form);
+  }
+
+  // Canned-response click: renders the question+answer bubble pair
+  // instantly, client-side, from data already known (no waiting on the
+  // network) -- then persists it in the background via a lazy session
+  // (created first if none exists yet, exactly as the first typed message
+  // already does) so a later real chat message has full conversation
+  // context. Chips are never removed/hidden after use.
+  function askPresetQuestion(index) {
+    var pq = presetQuestions[index];
+    if (!pq) {
+      return;
+    }
+    renderMessage("user", pq.question);
+    var bubble = renderMessage("assistant", "");
+    bubble.appendChild(parseInlineMarkdown(pq.answer));
+
+    function persist() {
+      var payload = { session_token: sessionToken, question_index: index };
+      try {
+        payload.origin = window.location.origin;
+      } catch (e) {}
+      fetch(apiBase + "/api/v1/public/widget/faq", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }).catch(function () {
+        // Best-effort persistence -- the visitor already sees the answer;
+        // a failed background save never surfaces as a UI error.
+      });
+    }
+
+    if (!sessionToken) {
+      initSession(function (err) {
+        if (!err) {
+          persist();
+        }
+      });
+    } else {
+      persist();
+    }
+  }
+
   launcher.addEventListener("click", function () {
     open = !open;
     panel.style.display = open ? "flex" : "none";
     launcher.textContent = open ? strings.launcherOpen : strings.launcherClosed;
+    renderPresetChips();
   });
 
   form.addEventListener("submit", function (e) {
@@ -505,6 +576,8 @@
     .then(function (config) {
       if (config) {
         applyTheme(config);
+        presetQuestions = config.preset_questions || [];
+        renderPresetChips();
       }
     })
     .catch(function () {
@@ -522,6 +595,13 @@
       renderMessage: renderMessage,
       sendMessage: sendMessage,
       messagesEl: messages,
+      launcherEl: launcher,
+      panelEl: panel,
+      askPresetQuestion: askPresetQuestion,
+      setPresetQuestions: function (questions) {
+        presetQuestions = questions;
+        chipsRendered = false;
+      },
     };
   }
 })();

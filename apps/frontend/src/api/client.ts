@@ -9,6 +9,7 @@ import type {
   ConversationList,
   DisabledUpdate,
   InvoiceList,
+  KnowledgeCrawlResult,
   KnowledgeDocument,
   KnowledgeDocumentList,
   KnowledgeSearchResult,
@@ -399,6 +400,16 @@ export const api = {
       `/api/v1/organizations/${orgId}/conversations/${conversationId}/messages`,
     );
   },
+  answerPresetQuestion(
+    orgId: number,
+    conversationId: number,
+    questionIndex: number,
+  ): Promise<void> {
+    return request<void>(
+      `/api/v1/organizations/${orgId}/conversations/${conversationId}/faq`,
+      { method: "POST", ...jsonBody({ question_index: questionIndex }) },
+    );
+  },
   createMessage(orgId: number, conversationId: number, content: string): Promise<Message> {
     return request<Message>(
       `/api/v1/organizations/${orgId}/conversations/${conversationId}/messages`,
@@ -458,6 +469,17 @@ export const api = {
   ): Promise<KnowledgeDocument> {
     return request<KnowledgeDocument>(
       `/api/v1/organizations/${orgId}/chatbots/${chatbotId}/knowledge/documents/url`,
+      { method: "POST", ...jsonBody({ url, title: title ?? null }) },
+    );
+  },
+  crawlUrl(
+    orgId: number,
+    chatbotId: number,
+    url: string,
+    title?: string,
+  ): Promise<KnowledgeCrawlResult> {
+    return request<KnowledgeCrawlResult>(
+      `/api/v1/organizations/${orgId}/chatbots/${chatbotId}/knowledge/documents/crawl`,
       { method: "POST", ...jsonBody({ url, title: title ?? null }) },
     );
   },

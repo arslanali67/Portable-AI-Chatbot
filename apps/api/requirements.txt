@@ -27,5 +27,6 @@ pypdf
 fpdf2
 python-docx
 beautifulsoup4
+tldextract==5.3.2
 pytest
 pytest-asyncio

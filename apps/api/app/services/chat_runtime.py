@@ -85,6 +85,10 @@ class AccessDeniedError(Exception):
     pass
 
 
+class PresetQuestionIndexError(Exception):
+    pass
+
+
 class RuntimeErrorAI(Exception):
     """Provider-neutral runtime failure wrapper.
 
@@ -556,6 +560,58 @@ class ChatRuntimeService:
         await self.messages.db.commit()
         await self.messages.db.refresh(assistant_message)
         yield ("end", {"message_id": assistant_message.id, "sequence_number": assistant_message.sequence_number})
+
+    async def answer_preset_question(
+        self, organization_id: int, conversation: Conversation, question_index: int
+    ) -> tuple[Message, Message]:
+        """Canned-response click: looks up preset_questions[question_index]
+        from the chatbot's own stored config — never client-supplied text,
+        which would let a request inject fabricated content into
+        conversation history — and persists a USER+ASSISTANT message pair
+        directly via MessageRepository.create(). Zero AI Gateway, RAG, or
+        ContextBuilder involvement, unlike every other assistant-authored
+        message in this system. Shared by both the public widget FAQ route
+        and the authenticated conversation FAQ route below; each has its
+        own conversation-resolution/authorization entry point (see
+        answer_preset_question_for_conversation and public_widget.py)."""
+        chatbot = await self.chatbots.get_by_id_for_organization(
+            organization_id, conversation.chatbot_id
+        )
+        if chatbot is None:
+            raise RuntimeErrorAI(500, "Chatbot configuration not found")
+
+        presets = chatbot.preset_questions or []
+        if question_index < 0 or question_index >= len(presets):
+            raise PresetQuestionIndexError()
+        pair = presets[question_index]
+
+        conversation_id = conversation.id
+        sequence = (await self.messages.get_latest_sequence(conversation_id)) + 1
+        user_message = await self.messages.create(
+            conversation_id=conversation_id,
+            role=MessageRole.USER,
+            content=pair["question"],
+            sequence_number=sequence,
+        )
+        assistant_message = await self.messages.create(
+            conversation_id=conversation_id,
+            role=MessageRole.ASSISTANT,
+            content=pair["answer"],
+            sequence_number=sequence + 1,
+        )
+        await self.messages.db.commit()
+        await self.messages.db.refresh(user_message)
+        await self.messages.db.refresh(assistant_message)
+        return user_message, assistant_message
+
+    async def answer_preset_question_for_conversation(
+        self, user: User, organization_id: int, conversation_id: int, question_index: int
+    ) -> tuple[Message, Message]:
+        """Authenticated-path entry point: authorize exactly like a normal
+        chat turn (same _authorize as chat()/stream_chat()), then delegate
+        to the shared answer_preset_question() core."""
+        conversation = await self._authorize(user, organization_id, conversation_id)
+        return await self.answer_preset_question(organization_id, conversation, question_index)
 
     async def _authorize(
         self, user: User, organization_id: int, conversation_id: int

@@ -64,11 +64,20 @@ function flush() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function mockFetch(stream) {
+function mockFetch(stream, overrides = {}) {
   return vi.fn((input) => {
     const url = String(input);
     if (url.indexOf("/widget/config") !== -1) {
+      if (overrides.config) {
+        return overrides.config();
+      }
       return Promise.resolve({ ok: false });
+    }
+    if (url.indexOf("/widget/faq") !== -1) {
+      if (overrides.faq) {
+        return overrides.faq();
+      }
+      return Promise.resolve({ ok: true });
     }
     if (url.indexOf("/widget/session") !== -1) {
       return Promise.resolve({
@@ -570,5 +579,127 @@ describe("widget.js — streaming integration (real SSE flow, no innerHTML anywh
     expect(link).not.toBeNull();
     expect(link.getAttribute("href")).toBe("https://2wordit.com/");
     expect(link.textContent).toBe("https://2wordit.com/");
+  });
+});
+
+describe("widget.js — preset/FAQ question chips", () => {
+  it("renders suggestion chips from the eager config as soon as the panel first opens", async () => {
+    installScriptTag();
+    vi.stubGlobal(
+      "fetch",
+      mockFetch(controlledSseBody(), {
+        config: () =>
+          Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                chatbot_name: "Bot",
+                welcome_message: "hi",
+                preset_questions: [{ question: "What are your hours?", answer: "9-5, Mon-Fri." }],
+              }),
+          }),
+      }),
+    );
+    const widget = await loadWidget();
+    await flush();
+    await flush();
+
+    widget.launcherEl.click();
+    await flush();
+
+    const chip = Array.from(widget.panelEl.querySelectorAll("button")).find(
+      (b) => b.textContent === "What are your hours?",
+    );
+    expect(chip).not.toBeUndefined();
+  });
+
+  it("clicking a chip renders the question+answer bubble pair instantly, before the persist call resolves", async () => {
+    installScriptTag();
+    localStorage.setItem("portableai_session_pk_test", "existing-session-tok");
+    let resolveFaq;
+    vi.stubGlobal(
+      "fetch",
+      mockFetch(controlledSseBody(), {
+        faq: () => new Promise((resolve) => { resolveFaq = resolve; }),
+      }),
+    );
+    const widget = await loadWidget();
+    widget.setPresetQuestions([{ question: "Q1", answer: "**A1** bold" }]);
+
+    widget.askPresetQuestion(0);
+    // No await before this check: proves the bubble pair renders
+    // synchronously from already-known data, not after a network round trip.
+    const bubbles = widget.messagesEl.children;
+    expect(bubbles.length).toBe(2);
+    expect(bubbles[0].textContent).toBe("Q1");
+    const strong = bubbles[1].querySelector("strong");
+    expect(strong).not.toBeNull();
+    expect(strong.textContent).toBe("A1");
+
+    resolveFaq({ ok: true });
+    await flush();
+  });
+
+  it("fires a background POST to /widget/faq with session_token and question_index once a session exists", async () => {
+    installScriptTag("pk_test");
+    localStorage.setItem("portableai_session_pk_test", "existing-session-tok");
+    const fetchMock = mockFetch(controlledSseBody());
+    vi.stubGlobal("fetch", fetchMock);
+    const widget = await loadWidget();
+    widget.setPresetQuestions([{ question: "Q1", answer: "A1" }]);
+
+    widget.askPresetQuestion(0);
+    await flush();
+
+    const faqCall = fetchMock.mock.calls.find((c) => String(c[0]).indexOf("/widget/faq") !== -1);
+    expect(faqCall).not.toBeUndefined();
+    const body = JSON.parse(faqCall[1].body);
+    expect(body.session_token).toBe("existing-session-tok");
+    expect(body.question_index).toBe(0);
+  });
+
+  it("lazily creates a session first if none exists yet, then persists in the background", async () => {
+    installScriptTag();
+    const fetchMock = mockFetch(controlledSseBody());
+    vi.stubGlobal("fetch", fetchMock);
+    const widget = await loadWidget();
+    widget.setPresetQuestions([{ question: "Q1", answer: "A1" }]);
+
+    widget.askPresetQuestion(0);
+    await flush();
+    await flush();
+
+    const sessionCall = fetchMock.mock.calls.find((c) => String(c[0]).indexOf("/widget/session") !== -1);
+    const faqCall = fetchMock.mock.calls.find((c) => String(c[0]).indexOf("/widget/faq") !== -1);
+    expect(sessionCall).not.toBeUndefined();
+    expect(faqCall).not.toBeUndefined();
+  });
+
+  it("keeps a chip visible after it's clicked, never hidden or removed", async () => {
+    installScriptTag();
+    vi.stubGlobal(
+      "fetch",
+      mockFetch(controlledSseBody(), {
+        config: () =>
+          Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ preset_questions: [{ question: "Q1", answer: "A1" }] }),
+          }),
+      }),
+    );
+    const widget = await loadWidget();
+    await flush();
+    await flush();
+    widget.launcherEl.click();
+    await flush();
+
+    const chip = Array.from(widget.panelEl.querySelectorAll("button")).find(
+      (b) => b.textContent === "Q1",
+    );
+    expect(chip).not.toBeUndefined();
+    chip.click();
+    await flush();
+
+    expect(document.body.contains(chip)).toBe(true);
   });
 });

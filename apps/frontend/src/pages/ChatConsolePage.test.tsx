@@ -2,7 +2,7 @@
 // message history, optimistic send + SSE reconciliation (start/user/token/end/
 // error contract of POST .../chat/stream), error and disabled states.
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -25,6 +25,35 @@ const CONV_A = {
 
 const CONV_B = { ...CONV_A, id: 12, title: "Chat B" };
 const CONV_ARCHIVED = { ...CONV_A, id: 13, title: "Old Chat", status: "archived" };
+
+const CHATBOT = {
+  id: 4746,
+  organization_id: 4590,
+  name: "Bot",
+  slug: "bot",
+  description: "",
+  system_prompt: "",
+  welcome_message: "",
+  status: "active",
+  visibility: "private",
+  language: "en",
+  provider_id: "fake-a",
+  model_id: "fake-model-small",
+  rag_enabled: true,
+  rag_top_k: null,
+  response_schema: null,
+  tools: null,
+  preset_questions: null,
+  created_at: "2026-08-01T10:00:00Z",
+  updated_at: "2026-08-01T10:00:00Z",
+};
+
+const CHATBOT_WITH_PRESETS = {
+  ...CHATBOT,
+  preset_questions: [
+    { question: "What are your hours?", answer: "We're open **9-5, Mon-Fri**." },
+  ],
+};
 
 const MSGS_A = [
   {
@@ -66,13 +95,18 @@ function route(options: {
   stream?: Response | Promise<Response>;
   archive?: Response;
   update?: Response;
+  chatbot?: Response;
+  faq?: Response | Promise<Response>;
 } = {}) {
-  const { list = [], messages = {}, create, stream, archive, update } = options;
+  const { list = [], messages = {}, create, stream, archive, update, chatbot, faq } = options;
   fetchMock.mockImplementation(async (input, init) => {
     const path = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
     if (path.endsWith("/chat/stream")) {
       return stream ?? sseResponse(["event: end\ndata: {}\n\n"]);
+    }
+    if (/\/conversations\/\d+\/faq$/.test(path)) {
+      return faq ?? jsonResponse(204, null);
     }
     if (/\/conversations\/\d+\/archive$/.test(path)) {
       return archive ?? jsonResponse(200, { ...CONV_A, status: "archived" });
@@ -87,6 +121,9 @@ function route(options: {
     if (path.endsWith("/conversations")) {
       if (method === "POST") return create ?? jsonResponse(201, CONV_B);
       return jsonResponse(200, { items: list, total: list.length, limit: 100, offset: 0 });
+    }
+    if (/\/chatbots\/\d+$/.test(path) && method === "GET") {
+      return chatbot ?? jsonResponse(200, CHATBOT);
     }
     return jsonResponse(404, { detail: "Not found" });
   });
@@ -479,5 +516,67 @@ describe("ChatConsolePage", () => {
 
     await screen.findByText("This conversation is archived and can't receive new messages.");
     expect(screen.queryByPlaceholderText("Type a message…")).not.toBeInTheDocument();
+  });
+
+  it("renders a preset-question chip and clicking it shows the pair instantly, then persists in the background", async () => {
+    let resolveFaq!: (response: Response) => void;
+    route({
+      list: [CONV_A],
+      messages: { 11: [] },
+      chatbot: jsonResponse(200, CHATBOT_WITH_PRESETS),
+      faq: new Promise<Response>((resolve) => { resolveFaq = resolve; }),
+    });
+    const user = userEvent.setup();
+
+    const { container } = renderPage();
+    await screen.findByText("Chat A");
+    await user.click(screen.getByRole("button", { name: "Chat A" }));
+    await screen.findByText("No messages yet. Say hello.");
+
+    const chip = await screen.findByRole("button", { name: "What are your hours?" });
+    await user.click(chip);
+
+    // Instant: both bubbles render before the background persist resolves.
+    const messagesArea = container.querySelector(".console-messages") as HTMLElement;
+    await within(messagesArea).findByText("What are your hours?");
+    await within(messagesArea).findByText(/We're open/);
+
+    const faqCall = fetchMock.mock.calls.find((c) => String(c[0]).endsWith("/conversations/11/faq"));
+    expect(faqCall).toBeDefined();
+    expect(JSON.parse(String(faqCall?.[1]?.body))).toEqual({ question_index: 0 });
+
+    resolveFaq(jsonResponse(204, null));
+  });
+
+  it("keeps the preset-question chip visible after it's clicked", async () => {
+    route({
+      list: [CONV_A],
+      messages: { 11: [] },
+      chatbot: jsonResponse(200, CHATBOT_WITH_PRESETS),
+    });
+    const user = userEvent.setup();
+
+    const { container } = renderPage();
+    await screen.findByText("Chat A");
+    await user.click(screen.getByRole("button", { name: "Chat A" }));
+
+    const chip = await screen.findByRole("button", { name: "What are your hours?" });
+    await user.click(chip);
+
+    const messagesArea = container.querySelector(".console-messages") as HTMLElement;
+    await within(messagesArea).findByText(/We're open/);
+    expect(screen.getByRole("button", { name: "What are your hours?" })).toBeInTheDocument();
+  });
+
+  it("does not render preset-question chips when the chatbot has none configured", async () => {
+    route({ list: [CONV_A], messages: { 11: [] }, chatbot: jsonResponse(200, CHATBOT) });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("Chat A");
+    await user.click(screen.getByRole("button", { name: "Chat A" }));
+    await screen.findByText("No messages yet. Say hello.");
+
+    expect(screen.queryByRole("button", { name: "What are your hours?" })).not.toBeInTheDocument();
   });
 });

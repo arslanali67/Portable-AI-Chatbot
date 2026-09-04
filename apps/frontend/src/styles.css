@@ -493,6 +493,33 @@ button.danger:hover:not(:disabled) {
 .console-input input {
   flex: 1;
 }
+.preset-questions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 12px 10px;
+}
+.preset-question-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+.preset-question-row input {
+  flex: 1;
+}
+.preset-question-row textarea {
+  flex: 2;
+}
+.chip {
+  padding: 6px 10px;
+  border: 1px solid var(--primary);
+  border-radius: 16px;
+  background: #fff;
+  color: var(--primary);
+  font-size: 12px;
+  cursor: pointer;
+}
 
 /* Knowledge */
 .knowledge-grid {

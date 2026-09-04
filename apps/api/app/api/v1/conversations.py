@@ -23,12 +23,13 @@ from app.schemas.conversation import (
     MessageListResponse,
     MessageResponse,
 )
-from app.schemas.chat_runtime import ChatRequest, ChatResponse
+from app.schemas.chat_runtime import ChatRequest, ChatResponse, PresetQuestionRequest
 from app.services.chat_runtime import (
     AccessDeniedError,
     ChatRuntimeService,
     ConversationArchivedError as RuntimeArchivedError,
     ConversationNotFoundError as RuntimeConvNotFoundError,
+    PresetQuestionIndexError,
     RuntimeErrorAI,
 )
 from app.services.conversation import (
@@ -271,6 +272,37 @@ async def chat_with_conversation(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Conversation is archived")
     except AccessDeniedError:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your conversation")
+    except RuntimeErrorAI as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+
+# --- Preset/FAQ questions (canned response, zero AI Gateway call) ---
+
+
+@router.post(
+    "/organizations/{organization_id}/conversations/{conversation_id}/faq",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def answer_preset_question(
+    organization_id: int,
+    conversation_id: int,
+    payload: PresetQuestionRequest,
+    current_user: User = Depends(get_current_user),
+    _membership: Membership = require_member,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await ChatRuntimeService(db).answer_preset_question_for_conversation(
+            current_user, organization_id, conversation_id, payload.question_index
+        )
+    except RuntimeConvNotFoundError:
+        raise _conversation_404()
+    except RuntimeArchivedError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Conversation is archived")
+    except AccessDeniedError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your conversation")
+    except PresetQuestionIndexError:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid question index")
     except RuntimeErrorAI as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail)
 

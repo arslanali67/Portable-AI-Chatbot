@@ -479,6 +479,7 @@ def test_public_config_valid_key_returns_exact_allowlist() -> None:
         "theme_color",
         "widget_position",
         "avatar_url",
+        "preset_questions",
     }
     assert body["chatbot_name"] == "Public Bot"
     assert body["welcome_message"] == "Hi there"
@@ -486,6 +487,7 @@ def test_public_config_valid_key_returns_exact_allowlist() -> None:
     assert body["theme_color"] is None
     assert body["widget_position"] is None
     assert body["avatar_url"] is None
+    assert body["preset_questions"] == []
     # No secret/system prompt/provider leakage — same discipline as /session.
     assert "system_prompt" not in r.text
     assert "provider" not in r.text

@@ -58,6 +58,15 @@ class KnowledgeDocumentListResponse(BaseModel):
     total: int
 
 
+class KnowledgeCrawlResponse(BaseModel):
+    documents: list[KnowledgeDocumentResponse]
+    pages_fetched: int
+    pages_ingested: int
+    pages_skipped: int
+    pages_failed: int
+    stopped_reason: str
+
+
 class KnowledgeSearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

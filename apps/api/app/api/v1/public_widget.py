@@ -13,15 +13,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.logging import get_logger
 from app.core.rate_limit import widget_ip_rate_limiter, widget_rate_limiter
-from app.models import Chatbot, Conversation, WidgetConfig, WidgetSession
+from app.models import Chatbot, WidgetConfig, WidgetSession
 from app.schemas.public_widget import (
+    PresetQuestionPair,
     WidgetChatRequest,
     WidgetConfigResponse,
+    WidgetFAQRequest,
     WidgetSessionRequest,
     WidgetSessionResponse,
 )
 from app.services.chat_runtime import (
     ChatRuntimeService,
+    PresetQuestionIndexError,
     RuntimeErrorAI,
 )
 from app.services.public_widget import (
@@ -57,6 +60,10 @@ def _build_config_response(chatbot: Chatbot, config: WidgetConfig) -> WidgetConf
         theme_color=config.theme_color,
         widget_position=config.widget_position.value if config.widget_position else None,
         avatar_url=config.avatar_url,
+        preset_questions=[
+            PresetQuestionPair(question=pair["question"], answer=pair["answer"])
+            for pair in (chatbot.preset_questions or [])
+        ],
     )
 
 
@@ -125,23 +132,7 @@ async def stream_chat(
         try:
             session, config, chatbot = await service.resolve_session(payload.session_token, origin)
             organization_id = chatbot.organization_id
-            placeholder_user = await service.get_or_create_placeholder_user(organization_id)
-
-            if session.conversation_id is None:
-                conversation = await service.ensure_conversation(
-                    organization_id, session.chatbot_id, placeholder_user
-                )
-                session.conversation_id = conversation.id
-                await db.commit()
-            else:
-                conversation = await db.get(Conversation, session.conversation_id)
-
-            # Defense-in-depth: a widget session may only stream against its
-            # own chatbot's conversation. A conversation bound to a different
-            # chatbot is refused without leaking any details — never follow it.
-            if conversation is None or conversation.chatbot_id != session.chatbot_id:
-                yield f"event: error\ndata: {json.dumps({'detail': 'Invalid session'})}\n\n"
-                return
+            conversation = await service.ensure_conversation_for_session(session, chatbot)
 
             async for event_type, data in ChatRuntimeService(db).stream_turn(
                 organization_id, conversation, payload
@@ -173,3 +164,43 @@ async def stream_chat(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/faq", status_code=status.HTTP_204_NO_CONTENT)
+async def answer_faq(
+    payload: WidgetFAQRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Canned-response click: zero AI Gateway call. Rate-limited exactly
+    like chat/stream — a preset click costs the platform two DB writes,
+    not a provider call, but it's still real per-session/per-IP traffic."""
+    origin = payload.origin or request.headers.get("origin")
+    client_ip = request.client.host if request.client else "unknown"
+    service = PublicWidgetService(db)
+
+    if not widget_rate_limiter.allow(f"session:{payload.session_token}"):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded")
+    if not widget_ip_rate_limiter.allow(f"ip:{client_ip}"):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded")
+
+    try:
+        session, config, chatbot = await service.resolve_session(payload.session_token, origin)
+        conversation = await service.ensure_conversation_for_session(session, chatbot)
+        await ChatRuntimeService(db).answer_preset_question(
+            chatbot.organization_id, conversation, payload.question_index
+        )
+    except InvalidSessionError as exc:
+        raise _widget_error(exc)
+    except PublicChatbotUnavailableError as exc:
+        raise _widget_error(exc)
+    except OrganizationDisabledError as exc:
+        raise _widget_error(exc)
+    except OriginDeniedError as exc:
+        raise _widget_error(exc)
+    except PresetQuestionIndexError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid question index"
+        )
+    except RuntimeErrorAI as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)

@@ -6,7 +6,7 @@ Every redirect re-validated through URLValidator. Response read is capped.
 import httpx
 
 from app.core.config import settings
-from app.rag.url_validator import URLValidator
+from app.rag.url_validator import URLValidator, ValidatedURL
 
 ALLOWED_CONTENT_TYPES = {"text/html", "application/xhtml+xml"}
 ROBOTS_CONTENT_TYPES = {"text/plain", "text/html", "application/xhtml+xml"}
@@ -42,6 +42,13 @@ class SecureHTTPFetcher:
         self._validator = validator or URLValidator()
         self._client = client or httpx.AsyncClient(timeout=settings.url_fetch_timeout)
 
+    def validate(self, url: str) -> ValidatedURL:
+        """Passthrough to this fetcher's URLValidator — lets callers (e.g. a
+        crawler) reuse the exact same SSRF check/validator instance (real or
+        test-injected) used for the actual fetch, without owning a second
+        validator."""
+        return self._validator.validate(url)
+
     async def fetch_html(self, url: str, *, check_robots: bool = True) -> tuple[str, str]:
         """Returns (canonical_url, html_body)."""
         current = self._validator.validate(url)
@@ -50,7 +57,13 @@ class SecureHTTPFetcher:
         url_after, body = await self._get_with_redirects(current.canonical)
         return url_after, body
 
-    async def _check_robots(self, validated) -> None:
+    async def fetch_robots_body(self, validated: ValidatedURL) -> str | None:
+        """Fetch robots.txt for validated's origin. None means no robots.txt
+        (404, nothing disallowed). Raises RobotsBlockedError if it could not
+        be checked safely (fail-closed) — same failure mode as the per-call
+        path below. Callers that check multiple pages on the same host (a
+        crawl) should call this once per host and reuse the body via
+        `robots_disallows`, rather than once per page."""
         origin = f"{validated.canonical.split('/', 3)[0]}//{validated.hostname}"
         robots_url = f"{origin}/robots.txt"
         try:
@@ -58,12 +71,19 @@ class SecureHTTPFetcher:
         except FetchError:
             raise RobotsBlockedError("robots.txt could not be checked safely")
         if status == 404:
-            # No robots.txt — nothing disallowed.
-            return
-        path = validated.canonical.split("/", 3)[3] if "/" in validated.canonical else "/"
+            return None
+        return body
+
+    @staticmethod
+    def robots_disallows(body: str, canonical_url: str) -> bool:
+        path = canonical_url.split("/", 3)[3] if "/" in canonical_url else "/"
         if not path.startswith("/"):
             path = "/" + path
-        if _robots_disallows(body, path):
+        return _robots_disallows(body, path)
+
+    async def _check_robots(self, validated: ValidatedURL) -> None:
+        body = await self.fetch_robots_body(validated)
+        if body is not None and self.robots_disallows(body, validated.canonical):
             raise RobotsBlockedError("robots.txt disallows this URL")
 
     async def _get_with_redirects(self, url: str, *, allow_robots: bool = False) -> tuple[str, str]:

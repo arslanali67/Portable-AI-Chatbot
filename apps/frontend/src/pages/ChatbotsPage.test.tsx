@@ -71,6 +71,7 @@ const BOT_DRAFT: Chatbot = {
   rag_top_k: null,
   response_schema: null,
   tools: null,
+  preset_questions: null,
   created_at: "2026-08-01T10:00:00Z",
   updated_at: "2026-08-01T10:00:00Z",
 };
@@ -622,6 +623,122 @@ describe("ChatbotsPage", () => {
     expect(JSON.parse(field.value)).toEqual([
       { name: "get_weather", description: "d", parameters: {} },
     ]);
+  });
+
+  it("adds preset-question rows and submits them on create", async () => {
+    route({ listBots: jsonResponse(200, []) });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("No chatbots yet. Create one to configure a chatbot.");
+
+    await user.click(screen.getByRole("button", { name: "New chatbot" }));
+    await screen.findByRole("option", { name: "Small A" });
+
+    await user.type(screen.getByLabelText("Name"), "FAQ Bot");
+    await user.type(screen.getByLabelText("Slug"), "faq-bot");
+    await user.selectOptions(screen.getByLabelText("Model"), "fake-model-small");
+
+    await user.click(screen.getByRole("button", { name: "Add question" }));
+    await user.type(screen.getByPlaceholderText("Question"), "What are your hours?");
+    await user.type(screen.getByPlaceholderText("Answer"), "9-5, Mon-Fri.");
+
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(calls("POST", /\/chatbots$/)).toHaveLength(1));
+    const [, init] = calls("POST", /\/chatbots$/)[0];
+    expect(JSON.parse(String(init?.body)).preset_questions).toEqual([
+      { question: "What are your hours?", answer: "9-5, Mon-Fri." },
+    ]);
+  });
+
+  it("submits preset_questions as null when no rows were added", async () => {
+    route({ listBots: jsonResponse(200, []) });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("No chatbots yet. Create one to configure a chatbot.");
+
+    await user.click(screen.getByRole("button", { name: "New chatbot" }));
+    await screen.findByRole("option", { name: "Small A" });
+
+    await user.type(screen.getByLabelText("Name"), "No FAQ Bot");
+    await user.type(screen.getByLabelText("Slug"), "no-faq-bot");
+    await user.selectOptions(screen.getByLabelText("Model"), "fake-model-small");
+
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(calls("POST", /\/chatbots$/)).toHaveLength(1));
+    const [, init] = calls("POST", /\/chatbots$/)[0];
+    expect(JSON.parse(String(init?.body)).preset_questions).toBeNull();
+  });
+
+  it("removes a preset-question row before submit", async () => {
+    route({ listBots: jsonResponse(200, []) });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("No chatbots yet. Create one to configure a chatbot.");
+
+    await user.click(screen.getByRole("button", { name: "New chatbot" }));
+    await screen.findByRole("option", { name: "Small A" });
+
+    await user.type(screen.getByLabelText("Name"), "Remove Row Bot");
+    await user.type(screen.getByLabelText("Slug"), "remove-row-bot");
+    await user.selectOptions(screen.getByLabelText("Model"), "fake-model-small");
+
+    await user.click(screen.getByRole("button", { name: "Add question" }));
+    await user.type(screen.getAllByPlaceholderText("Question")[0], "Row 1");
+    await user.type(screen.getAllByPlaceholderText("Answer")[0], "Answer 1");
+    await user.click(screen.getByRole("button", { name: "Add question" }));
+    await user.type(screen.getAllByPlaceholderText("Question")[1], "Row 2");
+    await user.type(screen.getAllByPlaceholderText("Answer")[1], "Answer 2");
+
+    await user.click(screen.getAllByRole("button", { name: "Remove" })[0]);
+    expect(screen.getAllByPlaceholderText("Question")).toHaveLength(1);
+    expect(screen.getByPlaceholderText("Question")).toHaveValue("Row 2");
+
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(calls("POST", /\/chatbots$/)).toHaveLength(1));
+    const [, init] = calls("POST", /\/chatbots$/)[0];
+    expect(JSON.parse(String(init?.body)).preset_questions).toEqual([
+      { question: "Row 2", answer: "Answer 2" },
+    ]);
+  });
+
+  it("disables 'Add question' once the max of 10 rows is reached", async () => {
+    route({ listBots: jsonResponse(200, []) });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("No chatbots yet. Create one to configure a chatbot.");
+    await user.click(screen.getByRole("button", { name: "New chatbot" }));
+    await screen.findByRole("option", { name: "Small A" });
+
+    const addButton = screen.getByRole("button", { name: "Add question" });
+    for (let i = 0; i < 10; i++) {
+      await user.click(addButton);
+    }
+    expect(screen.getAllByPlaceholderText("Question")).toHaveLength(10);
+    expect(addButton).toBeDisabled();
+  });
+
+  it("loads an existing chatbot's preset_questions into the edit form", async () => {
+    route({
+      listBots: jsonResponse(200, [
+        { ...BOT_DRAFT, preset_questions: [{ question: "Existing Q", answer: "Existing A" }] },
+      ]),
+    });
+    const user = userEvent.setup();
+
+    renderPage();
+    await screen.findByText("Draft Bot");
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(screen.getByPlaceholderText("Question")).toHaveValue("Existing Q");
+    expect(screen.getByPlaceholderText("Answer")).toHaveValue("Existing A");
   });
 
   it("enforces the 1-20 bound on the RAG top_k input", async () => {

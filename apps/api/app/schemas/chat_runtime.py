@@ -38,3 +38,13 @@ class ChatResponse(BaseModel):
     conversation_id: int
     user_message: MessageResponse
     assistant_message: MessageResponse
+
+
+class PresetQuestionRequest(BaseModel):
+    """Canned-response click: only an index into the chatbot's own stored
+    preset_questions is ever accepted — never question/answer text, which
+    would let a client inject fabricated content into conversation history."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    question_index: int = Field(ge=0)

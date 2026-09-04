@@ -10,6 +10,11 @@ class WidgetSessionRequest(BaseModel):
     origin: str | None = Field(default=None, max_length=500)
 
 
+class PresetQuestionPair(BaseModel):
+    question: str
+    answer: str
+
+
 class WidgetConfigResponse(BaseModel):
     chatbot_name: str
     welcome_message: str
@@ -18,6 +23,7 @@ class WidgetConfigResponse(BaseModel):
     theme_color: str | None = None
     widget_position: str | None = None
     avatar_url: str | None = None
+    preset_questions: list[PresetQuestionPair] = []
 
 
 class WidgetSessionResponse(BaseModel):
@@ -38,3 +44,14 @@ class WidgetChatRequest(BaseModel):
         if not value.strip():
             raise ValueError("content must not be empty or whitespace")
         return value
+
+
+class WidgetFAQRequest(BaseModel):
+    """Canned-response click: only an index into the chatbot's own stored
+    preset_questions is ever accepted — never question/answer text."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_token: str = Field(min_length=1, max_length=128)
+    question_index: int = Field(ge=0)
+    origin: str | None = Field(default=None, max_length=500)

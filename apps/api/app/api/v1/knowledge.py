@@ -9,9 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import require_organization_role
+from app.core.rate_limit import crawl_rate_limiter
 from app.models import Membership
 from app.models.enums import MembershipRole
 from app.schemas.knowledge import (
+    KnowledgeCrawlResponse,
     KnowledgeDocumentCreate,
     KnowledgeDocumentListResponse,
     KnowledgeDocumentResponse,
@@ -144,6 +146,38 @@ async def ingest_url(
     except DuplicateDocumentError:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Duplicate content for this chatbot")
     return await _with_chunk_count(db, organization_id, chatbot_id, document)
+
+
+@router.post("/documents/crawl", response_model=KnowledgeCrawlResponse, status_code=status.HTTP_201_CREATED)
+async def crawl_url(
+    organization_id: int,
+    chatbot_id: int,
+    payload: KnowledgeURLCreate,
+    _membership: Membership = require_member,
+    db: AsyncSession = Depends(get_db),
+):
+    if not crawl_rate_limiter.allow(f"org:{organization_id}"):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded")
+    try:
+        result = await KnowledgeService(db).crawl(organization_id, chatbot_id, payload)
+    except ChatbotNotFoundError:
+        raise _chatbot_404()
+    except URLFetchError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="URL could not be ingested safely",
+        )
+    documents = [
+        await _with_chunk_count(db, organization_id, chatbot_id, d) for d in result.documents
+    ]
+    return KnowledgeCrawlResponse(
+        documents=documents,
+        pages_fetched=result.pages_fetched,
+        pages_ingested=result.pages_ingested,
+        pages_skipped=result.pages_skipped,
+        pages_failed=result.pages_failed,
+        stopped_reason=result.stopped_reason,
+    )
 
 
 @router.get("/documents", response_model=KnowledgeDocumentListResponse)

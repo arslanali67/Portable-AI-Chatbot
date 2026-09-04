@@ -120,3 +120,9 @@ password_reset_email_rate_limiter: RateLimiter = build_rate_limiter(
 password_reset_ip_rate_limiter: RateLimiter = build_rate_limiter(
     limit=20, window_seconds=3600, name="pwreset_ip"
 )
+
+# Crawl ingestion costs far more than a single-URL ingest (up to
+# max_crawl_pages fetches/embeds per request) — limited per organization.
+crawl_rate_limiter: RateLimiter = build_rate_limiter(
+    limit=settings.crawl_rate_limit_per_hour, window_seconds=3600, name="crawl"
+)

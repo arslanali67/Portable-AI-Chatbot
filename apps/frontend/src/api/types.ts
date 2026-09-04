@@ -51,6 +51,11 @@ export interface MembershipCreate {
 export type ChatbotStatus = "draft" | "active" | "archived";
 export type ChatbotVisibility = "public" | "private";
 
+export interface PresetQuestion {
+  question: string;
+  answer: string;
+}
+
 export interface Chatbot {
   id: number;
   organization_id: number;
@@ -68,6 +73,7 @@ export interface Chatbot {
   rag_top_k: number | null;
   response_schema: Record<string, unknown> | null;
   tools: Record<string, unknown>[] | null;
+  preset_questions: PresetQuestion[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -86,6 +92,7 @@ export interface ChatbotCreate {
   rag_top_k?: number | null;
   response_schema?: Record<string, unknown> | null;
   tools?: Record<string, unknown>[] | null;
+  preset_questions?: PresetQuestion[] | null;
 }
 
 export interface ChatbotUpdate {
@@ -102,6 +109,7 @@ export interface ChatbotUpdate {
   rag_top_k?: number | null;
   response_schema?: Record<string, unknown> | null;
   tools?: Record<string, unknown>[] | null;
+  preset_questions?: PresetQuestion[] | null;
 }
 
 export type AICapability =
@@ -165,6 +173,15 @@ export interface KnowledgeDocument {
 export interface KnowledgeDocumentList {
   items: KnowledgeDocument[];
   total: number;
+}
+
+export interface KnowledgeCrawlResult {
+  documents: KnowledgeDocument[];
+  pages_fetched: number;
+  pages_ingested: number;
+  pages_skipped: number;
+  pages_failed: number;
+  stopped_reason: string;
 }
 
 export interface RetrievedChunk {

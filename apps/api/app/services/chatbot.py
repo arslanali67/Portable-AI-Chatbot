@@ -116,6 +116,7 @@ class ChatbotService:
             rag_top_k=payload.rag_top_k,
             response_schema=payload.response_schema,
             tools=payload.tools,
+            preset_questions=payload.preset_questions,
         )
         try:
             await self.chatbots.db.commit()

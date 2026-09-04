@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 
 import { api } from "../api/client";
 import { errorMessage } from "../auth/AuthContext";
-import type { KnowledgeDocument, RetrievedChunk } from "../api/types";
+import type { KnowledgeCrawlResult, KnowledgeDocument, RetrievedChunk } from "../api/types";
 
 export default function KnowledgePage() {
   const { organizationId, chatbotId } = useParams<{
@@ -24,6 +24,11 @@ export default function KnowledgePage() {
   const [fileTitle, setFileTitle] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const [crawlUrlInput, setCrawlUrlInput] = useState("");
+  const [crawlTitle, setCrawlTitle] = useState("");
+  const [crawling, setCrawling] = useState(false);
+  const [crawlSummary, setCrawlSummary] = useState<KnowledgeCrawlResult | null>(null);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<RetrievedChunk[] | null>(null);
@@ -75,6 +80,25 @@ export default function KnowledgePage() {
       load();
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function crawlSite(e: FormEvent) {
+    e.preventDefault();
+    setCrawling(true);
+    setError(null);
+    setCrawlSummary(null);
+    try {
+      const summary = await api.crawlUrl(orgId, botId, crawlUrlInput, crawlTitle || undefined);
+      setCrawlSummary(summary);
+      setCrawlUrlInput("");
+      setCrawlTitle("");
+      load();
+    } catch (err) {
+      setError(errorMessage(err));
+      load();
+    } finally {
+      setCrawling(false);
     }
   }
 
@@ -173,6 +197,41 @@ export default function KnowledgePage() {
           <button type="submit" disabled={saving}>
             Ingest URL
           </button>
+        </form>
+
+        <form className="panel" onSubmit={crawlSite}>
+          <h3>Crawl website</h3>
+          <input
+            placeholder="https://example.com"
+            value={crawlUrlInput}
+            onChange={(e) => setCrawlUrlInput(e.target.value)}
+            required
+            maxLength={2000}
+            disabled={crawling}
+          />
+          <input
+            placeholder="Optional title (entry page only)"
+            value={crawlTitle}
+            onChange={(e) => setCrawlTitle(e.target.value)}
+            maxLength={255}
+            disabled={crawling}
+          />
+          <button type="submit" disabled={crawling}>
+            {crawling ? "Crawling…" : "Crawl website"}
+          </button>
+          {crawling && (
+            <p className="muted small">
+              Fetching this site's same-domain pages — this can take up to two
+              minutes. Please don't close this tab.
+            </p>
+          )}
+          {crawlSummary && !crawling && (
+            <p className="muted small">
+              Crawled {crawlSummary.pages_fetched} page(s): {crawlSummary.pages_ingested}{" "}
+              added, {crawlSummary.pages_skipped} skipped (duplicate),{" "}
+              {crawlSummary.pages_failed} failed. Stopped: {crawlSummary.stopped_reason}.
+            </p>
+          )}
         </form>
 
         <form className="panel" onSubmit={ingestFile}>

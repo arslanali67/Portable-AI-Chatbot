@@ -22,6 +22,7 @@ class KnowledgeDocumentRepository:
         original_filename: str | None = None,
         file_size: int | None = None,
         content_hash: str | None = None,
+        metadata_json: dict | None = None,
     ) -> KnowledgeDocument:
         document = KnowledgeDocument(
             organization_id=organization_id,
@@ -33,6 +34,7 @@ class KnowledgeDocumentRepository:
             original_filename=original_filename,
             file_size=file_size,
             content_hash=content_hash,
+            metadata_json=metadata_json,
         )
         self.db.add(document)
         return document

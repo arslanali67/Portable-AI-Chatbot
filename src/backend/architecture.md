@@ -898,7 +898,7 @@ URL → URLValidator → SecureHTTPFetcher → HTMLTextExtractor → KnowledgeSe
 ```
 
 - Reuses the existing ingestion pipeline (`_run_pipeline`) — no duplicate normalize/chunk/embed/hash/persist logic.
-- Public pages only; no JS rendering, no crawler, no sitemaps, no authenticated sites, no cookies/custom headers.
+- Public pages only; no JS rendering, no sitemaps, no authenticated sites, no cookies/custom headers. Bounded same-registrable-domain crawling is available via a separate endpoint — see "Bounded Same-Domain Crawl" below.
 
 ### URL Validation (SSRF Protection)
 
@@ -924,9 +924,21 @@ URL → URLValidator → SecureHTTPFetcher → HTMLTextExtractor → KnowledgeSe
 - Reuse existing SHA-256 content hash + duplicate rules (same org+chatbot → 409; different chatbot/org allowed).
 - Failure (DNS/conn/timeout/redirect/4xx/5xx/content-type/size/robots/empty HTML) → document `failed`, never searchable; safe generic errors, no internal network details.
 
+### Bounded Same-Domain Crawl
+
+- New endpoint `POST .../knowledge/documents/crawl`, distinct request/response shape from single-URL ingestion (`{url, title}` in; `{documents: [...], pages_fetched, pages_ingested, pages_skipped, pages_failed, stopped_reason}` out).
+- Algorithm: entry fetch (existing `URLValidator`/`SecureHTTPFetcher`, unconditional) → extract same-registrable-domain links from the already-fetched HTML (`extract_links()`, no extra fetch) → dedupe → BFS queue, capped → per-link fetch reuses `URLValidator`/`SecureHTTPFetcher` unconditionally for every discovered link, no exceptions — a discovered link pointing at a private/internal address is rejected exactly like a direct single-URL ingest attempt.
+- Registrable-domain matching via `tldextract` (public-suffix-list aware): `www.example.com`/`blog.example.com` both match an `example.com` entry; `example.co.uk` does not; two different `*.github.io` sites are correctly treated as different domains. This is a hard boundary, not a tunable.
+- Caps (hard stops, checked before starting each next page fetch): `max_crawl_pages` (50), `max_crawl_depth` (3, entry page = depth 0), `crawl_time_budget_seconds` (120) — new `app/core/config.py` settings, same style as `url_max_redirects` etc. Hitting any cap sets `stopped_reason` (`page_limit` | `depth_limit` | `time_budget` | `exhausted`) and returns whatever was ingested so far.
+- `robots.txt` fetched/cached once per crawl (per domain) — a crawl-path-only optimization; single-URL ingestion keeps its existing per-call `_check_robots()` behavior unchanged.
+- Each page commits via the existing `_run_pipeline` before the next page starts, so an early stop (cap hit, or the production reverse proxy's timeout) never loses already-ingested pages.
+- `metadata_json` on each crawl-sourced document carries `{"crawl_entry_url": ..., "crawl_depth": ...}`; `source_type` stays `"url"` — no schema/migration change.
+- Synchronous; the production reverse proxy's `proxy_read_timeout`/`proxy_send_timeout` are raised to give headroom above the 120s crawl budget (see Deployment).
+- Rate-limited to 5 crawls/hour per organization via the existing `RateLimiter` factory (`build_rate_limiter()`), same pattern as widget sessions/password-reset; single-URL ingestion remains unlimited, unchanged.
+
 ### Future
 
-- Crawler, sitemaps, background workers, JS rendering, per-source policies.
+- Sitemaps, background workers, JS rendering, per-source policies, unbounded/deep crawling.
 
 ## 20. Streaming Chat (SSE)
 
@@ -1039,6 +1051,18 @@ Website → widget.js → Public Widget API → Widget Session → existing Chat
 - `GET /api/v1/public/widget/config` is fetched eagerly at script load (no session, no DB write) so the always-visible launcher renders themed from the start; the existing lazy session-creation flow on first message is unchanged.
 - `WidgetConfigService.update()` + `PATCH .../widget-config` (admin, organization-scoped) is new — no update path existed before this milestone.
 
+### Preset FAQ Questions
+
+- `chatbots.preset_questions`: nullable JSON, `list[{"question": str, "answer": str}]`, max 10 entries, question ≤200 chars / answer ≤2000 chars — validated at chatbot save time. Mirrors `chatbots.tools`'s data-model precedent (bounded list of small dicts, no independent lifecycle/table, unlike `widget_configs`/`ai_provider_credentials`).
+- `GET /api/v1/public/widget/config` response gains `preset_questions: list[{question, answer}]` — both fields sent eagerly (non-secret, admin-authored, meant for visitors); no separate "fetch answer on click" round-trip.
+- Ships on **both** the public widget and the authenticated admin test console (a deliberate deviation from this feature's original scoping recommendation, per explicit user choice) — two parallel routes share one persistence method:
+  - `POST /api/v1/public/widget/faq` (public): `{session_token, question_index}`, rate-limited via the existing `widget_rate_limiter`/`widget_ip_rate_limiter`.
+  - `POST /api/v1/organizations/{organization_id}/conversations/{conversation_id}/faq` (authenticated): `{question_index}`, same `require_organization_membership`-family auth as a normal chat turn.
+  - Both call one shared method (`ChatRuntimeService.answer_preset_question()`): looks up the canonical pair from the chatbot's own `preset_questions[question_index]` (never client-supplied text — closes an injection path into conversation history), creates the conversation if none exists yet (same lazy-conversation logic each surface's normal chat turn already uses), persists a USER message (question) + ASSISTANT message (answer) via `MessageRepository.create()` directly — **zero AI Gateway, RAG, or ContextBuilder involvement**, unlike every other assistant-authored message in this system. Both routes return 204 — each UI has already rendered the pair client-side from data it already had (the eager config for the widget, the chatbot object already loaded for the console), so the response body carries nothing new.
+- `widget.js`: suggestion chips render from the eager config fetch as soon as the panel first opens (independent of session/message state, like theme already is), stay visible after use, and route their answer text through the existing `parseInlineMarkdown()` renderer. Clicking a chip lazily creates a session first if none exists yet (reusing `initSession()`), exactly as the first typed message already does.
+- `ChatConsolePage.tsx`: same suggestion-chip pattern, reusing the existing `MessageMarkdown.tsx` renderer; same instant-client-render-then-background-persist behavior.
+- `ChatbotsPage.tsx`: structured add/remove-row authoring UI (question/answer input pairs, an "Add question" button, a remove control per row), not a raw JSON textarea — a deliberate upgrade over the `tools`/`response_schema` precedent, since FAQ authoring's admin audience is less likely to be JSON-literate. Client-side enforces the same bounds (max 10 rows, char limits) before submit.
+
 ### XSS Protection
 
 - All model output/user content/welcome message rendered as text via `textContent` — never `innerHTML` with untrusted data. No eval, no dynamic script execution.
@@ -1135,7 +1159,7 @@ CI therefore enforces the same verification commands developers run locally; it 
 
 ## 26. Out of Scope (current milestone)
 
-WebSocket transport, widget per-install customization beyond the current public config, recursive crawling/sitemaps/JS rendering/OCR, background workers, reranking, semantic cache, document versioning, automatic re-indexing, more embedding providers, analytics, agents, MCP, idempotency keys, usage persistence, fallback/circuit breaker (transient-failure retry-with-backoff is implemented — see §13's "Transient Provider Error Retry"), provider/model DB tables, provider enable/disable mutation, platform-admin role.
+WebSocket transport, widget per-install customization beyond the current public config, sitemap.xml parsing, JS-rendered page crawling, OCR, background workers (bounded same-registrable-domain crawl ingestion is now in scope — see §19; unbounded/deep crawling and background-job-based crawling remain out), reranking, semantic cache, document versioning, automatic re-indexing, more embedding providers, analytics, agents, MCP, idempotency keys, usage persistence, fallback/circuit breaker (transient-failure retry-with-backoff is implemented — see §13's "Transient Provider Error Retry"), provider/model DB tables, provider enable/disable mutation, platform-admin role.
 
 ## 27. Future AI Gateway Extensions
 
